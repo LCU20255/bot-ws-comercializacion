@@ -88,9 +88,20 @@ def start_baileys_process():
     if not node_modules.exists():
         logger.info("Instalando dependencias de Baileys (npm install)...")
         try:
-            subprocess.run(["npm", "install", "--production"], cwd=str(baileys_dir), check=True, shell=True)
+            cmd = "npm install --omit=dev --no-audit --no-fund"
+            res = subprocess.run(
+                cmd,
+                cwd=str(baileys_dir),
+                shell=True,
+                capture_output=True,
+                text=True
+            )
+            if res.returncode != 0:
+                logger.error(f"Error ejecutando npm install (código {res.returncode}): {res.stderr or res.stdout}")
+            else:
+                logger.info("Dependencias de Baileys instaladas correctamente.")
         except Exception as e:
-            logger.error(f"Error ejecutando npm install en Baileys: {e}")
+            logger.error(f"Excepción ejecutando npm install en Baileys: {e}")
 
     try:
         if baileys_process and baileys_process.poll() is None:
@@ -103,10 +114,12 @@ def start_baileys_process():
         env = os.environ.copy()
         port = env.get("PORT", "8000")
         env["PYTHON_API_URL"] = f"http://127.0.0.1:{port}/api/chat/simulate"
+        node_cmd = "node index.js"
         baileys_process = subprocess.Popen(
-            ["node", "index.js"],
+            node_cmd,
             cwd=str(baileys_dir),
             env=env,
+            shell=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -169,6 +182,10 @@ class ConfigSchema(BaseModel):
     whatsapp_bot_number: Optional[str] = None
 
 # ----------------- VIEWS -----------------
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon_endpoint():
+    return Response(status_code=204)
+
 @app.get("/", response_class=RedirectResponse)
 def root_redirect():
     return RedirectResponse(url="/admin")
