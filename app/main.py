@@ -42,10 +42,85 @@ app.add_middleware(
 # Archivos estáticos
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "app" / "static")), name="static")
 
+import subprocess
+import threading
+import time
+
+baileys_process = None
+baileys_state = {
+    "status": "DISCONNECTED",
+    "qr": None,
+    "qr_timestamp": 0,
+    "phone": None
+}
+
+def read_baileys_output(proc):
+    global baileys_state
+    for line in iter(proc.stdout.readline, ''):
+        if not line:
+            break
+        clean_line = line.strip()
+        if "[BAILEYS_QR_DATA]" in clean_line and "[/BAILEYS_QR_DATA]" in clean_line:
+            qr = clean_line.split("[BAILEYS_QR_DATA]")[1].split("[/BAILEYS_QR_DATA]")[0].strip()
+            baileys_state["qr"] = qr
+            baileys_state["qr_timestamp"] = time.time()
+            baileys_state["status"] = "QR"
+            logger.info("QR Code capturado en tiempo real desde Baileys stdout")
+        elif "[BAILEYS_CONNECTED]" in clean_line and "[/BAILEYS_CONNECTED]" in clean_line:
+            phone = clean_line.split("[BAILEYS_CONNECTED]")[1].split("[/BAILEYS_CONNECTED]")[0].strip()
+            baileys_state["status"] = "CONNECTED"
+            baileys_state["phone"] = phone
+            baileys_state["qr"] = None
+            logger.info(f"WhatsApp Baileys conectado exitosamente: {phone}")
+        elif "[BAILEYS_STATUS]DISCONNECTED" in clean_line:
+            baileys_state["status"] = "DISCONNECTED"
+            logger.info("WhatsApp Baileys desconectado")
+
+def start_baileys_process():
+    global baileys_process, baileys_state
+    baileys_dir = BASE_DIR / "whatsapp_baileys"
+    script_path = baileys_dir / "index.js"
+    if not script_path.exists():
+        logger.warning(f"No se encontró index.js en {baileys_dir}")
+        return
+
+    node_modules = baileys_dir / "node_modules"
+    if not node_modules.exists():
+        logger.info("Instalando dependencias de Baileys (npm install)...")
+        try:
+            subprocess.run(["npm", "install", "--production"], cwd=str(baileys_dir), check=True, shell=True)
+        except Exception as e:
+            logger.error(f"Error ejecutando npm install en Baileys: {e}")
+
+    try:
+        if baileys_process and baileys_process.poll() is None:
+            try:
+                baileys_process.terminate()
+            except Exception:
+                pass
+
+        logger.info("Iniciando subproceso de Baileys con Node...")
+        env = os.environ.copy()
+        port = env.get("PORT", "8000")
+        env["PYTHON_API_URL"] = f"http://127.0.0.1:{port}/api/chat/simulate"
+        baileys_process = subprocess.Popen(
+            ["node", "index.js"],
+            cwd=str(baileys_dir),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1
+        )
+        threading.Thread(target=read_baileys_output, args=(baileys_process,), daemon=True).start()
+    except Exception as e:
+        logger.error(f"Error iniciando proceso de Baileys: {e}")
+
 @app.on_event("startup")
 def startup_event():
     init_db()
     logger.info("Base de datos de comercialización textil militar lista.")
+    threading.Thread(target=start_baileys_process, daemon=True).start()
 
 # ----------------- SCHEMAS -----------------
 class ProductSchema(BaseModel):
@@ -291,14 +366,99 @@ def api_reset_chat(body: SimulateChatSchema):
     return {"status": "ok", "message": "Sesión reiniciada"}
 
 # ----------------- REST API: BAILEYS QR & ESTADO -----------------
+class BaileysInternalStatus(BaseModel):
+    status: str
+    qr: Optional[str] = None
+    timestamp: Optional[int] = None
+    phone: Optional[str] = None
+
+@app.post("/api/baileys/internal-status")
+def api_baileys_internal_status(body: BaileysInternalStatus):
+    global baileys_state
+    baileys_state["status"] = body.status
+    if body.qr:
+        baileys_state["qr"] = body.qr
+        baileys_state["qr_timestamp"] = time.time()
+    if body.phone:
+        baileys_state["phone"] = body.phone
+    logger.info(f"[Baileys Status Update] {body.status}")
+    return {"status": "ok"}
+
+@app.post("/api/baileys/restart")
+def api_baileys_restart(clean_auth: bool = False):
+    global baileys_state
+    baileys_state["status"] = "RESTARTING"
+    baileys_state["qr"] = None
+    baileys_state["qr_timestamp"] = 0
+
+    qr_img = BASE_DIR / "app" / "static" / "images" / "baileys_qr.png"
+    if qr_img.exists():
+        try:
+            qr_img.unlink()
+        except Exception:
+            pass
+
+    if clean_auth:
+        auth_dir = BASE_DIR / "whatsapp_baileys" / "auth_info_baileys"
+        if auth_dir.exists():
+            try:
+                shutil.rmtree(auth_dir, ignore_errors=True)
+            except Exception:
+                pass
+
+    threading.Thread(target=start_baileys_process, daemon=True).start()
+    return {"status": "ok", "message": "Baileys reiniciando y generando nuevo código QR"}
+
 @app.get("/api/baileys/status")
 def api_baileys_status():
+    global baileys_state, baileys_process
     qr_path = BASE_DIR / "app" / "static" / "images" / "baileys_qr.png"
-    has_qr = qr_path.exists()
+    has_qr_file = qr_path.exists()
+    has_qr_mem = baileys_state["qr"] is not None
+
+    now = time.time()
+    qr_age = now - baileys_state.get("qr_timestamp", 0) if baileys_state.get("qr_timestamp") else 999
+    is_expired = qr_age > 60
+
+    is_connected = baileys_state["status"] == "CONNECTED"
+    has_valid_qr = (has_qr_file or has_qr_mem) and not is_expired and not is_connected
+
     return {
-        "has_qr": has_qr,
-        "qr_url": f"/static/images/baileys_qr.png?t={int(pd.Timestamp.now().timestamp())}" if has_qr else None
+        "status": baileys_state["status"],
+        "connected": is_connected,
+        "has_qr": has_valid_qr,
+        "qr_url": f"/api/baileys/qr-image?t={int(now * 1000)}" if has_valid_qr else None,
+        "phone": baileys_state.get("phone")
     }
+
+@app.get("/api/baileys/qr-image")
+def api_baileys_qr_image():
+    global baileys_state
+    if baileys_state.get("qr"):
+        qr = qrcode.QRCode(version=1, box_size=8, border=2)
+        qr.add_data(baileys_state["qr"])
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="#0F172A", back_color="white")
+        img_byte_arr = io.BytesIO()
+        img.save(img_byte_arr, format='PNG')
+        img_byte_arr.seek(0)
+        return StreamingResponse(
+            img_byte_arr,
+            media_type="image/png",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
+        )
+
+    qr_path = BASE_DIR / "app" / "static" / "images" / "baileys_qr.png"
+    if qr_path.exists():
+        with open(qr_path, "rb") as f:
+            content = f.read()
+        return Response(
+            content=content,
+            media_type="image/png",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
+        )
+
+    raise HTTPException(status_code=404, detail="Código QR aún no generado")
 
 @app.get("/api/qr")
 def api_qr_code(text: str = Query(default="https://wa.me/584121234567")):

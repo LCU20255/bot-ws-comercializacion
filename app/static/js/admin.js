@@ -711,22 +711,111 @@ async function saveSettings(e) {
   }
 }
 
-// ----------------- BAILEYS QR STATUS -----------------
+// ----------------- BAILEYS QR & CONNECTION LIFECYCLE -----------------
+let lastKnownQRUrl = null;
+
 async function checkBaileysStatus() {
   try {
     const res = await fetch("/api/baileys/status");
+    if (!res.ok) return;
     const data = await res.json();
+
+    const boxConnected = document.getElementById("box-connected");
+    const boxUnconnected = document.getElementById("box-unconnected");
+    const connBadge = document.getElementById("conn-badge");
+    const connPhone = document.getElementById("conn-phone");
+    const statusTitle = document.getElementById("status-title");
+    const statusEngine = document.getElementById("status-engine");
+    const statusIndicator = document.querySelector(".status-indicator");
     const qrImg = document.getElementById("qr-image");
-    if (qrImg && data.has_qr && data.qr_url) {
-      qrImg.src = data.qr_url + "&r=" + Date.now();
+    const spinner = document.getElementById("qr-loading-spinner");
+
+    if (data.connected) {
+      if (boxConnected) boxConnected.style.display = "block";
+      if (boxUnconnected) boxUnconnected.style.display = "none";
+      if (connBadge) {
+        connBadge.className = "badge-status confirmed";
+        connBadge.textContent = "Conectado";
+      }
+      if (connPhone) {
+        connPhone.textContent = data.phone ? `+${data.phone}` : "Línea Militar Conectada";
+      }
+      if (statusTitle) statusTitle.textContent = "BOT EN LÍNEA";
+      if (statusEngine) statusEngine.textContent = data.phone ? `+${data.phone}` : "WhatsApp Baileys";
+      if (statusIndicator) {
+        statusIndicator.className = "status-indicator online";
+        statusIndicator.style.background = "#16a34a";
+      }
+    } else {
+      if (boxConnected) boxConnected.style.display = "none";
+      if (boxUnconnected) boxUnconnected.style.display = "block";
+      if (connBadge) {
+        connBadge.className = "badge-status pending";
+        connBadge.textContent = data.status === "RESTARTING" ? "Reiniciando..." : "Esperando Escaneo";
+      }
+      if (statusTitle) statusTitle.textContent = data.status === "RESTARTING" ? "REINICIANDO..." : "ESPERANDO QR";
+      if (statusEngine) statusEngine.textContent = "WhatsApp Baileys";
+      if (statusIndicator) {
+        statusIndicator.className = "status-indicator";
+        statusIndicator.style.background = "#f59e0b";
+      }
+
+      if (data.has_qr && data.qr_url) {
+        if (spinner) spinner.style.display = "none";
+        if (qrImg) {
+          qrImg.style.display = "block";
+          if (lastKnownQRUrl !== data.qr_url) {
+            lastKnownQRUrl = data.qr_url;
+            qrImg.src = data.qr_url;
+          }
+        }
+      } else {
+        if (spinner) spinner.style.display = "block";
+        if (qrImg) qrImg.style.display = "none";
+      }
     }
-  } catch (e) {}
+  } catch (e) {
+    console.warn("Estado Baileys no disponible temporalmente:", e);
+  }
 }
 
-setInterval(checkBaileysStatus, 3000);
+function handleQRError() {
+  const qrImg = document.getElementById("qr-image");
+  const spinner = document.getElementById("qr-loading-spinner");
+  if (qrImg) qrImg.style.display = "none";
+  if (spinner) spinner.style.display = "block";
+}
+
+async function restartBaileysQR(cleanAuth = false) {
+  const confirmMsg = cleanAuth
+    ? "¿Estás seguro de que deseas cerrar la sesión actual y generar un nuevo código QR limpio?"
+    : "¿Deseas reiniciar el motor de WhatsApp y generar un nuevo código QR?";
+
+  const confirmed = await confirmAction("Conexión WhatsApp", confirmMsg, "Sí, continuar", cleanAuth);
+  if (!confirmed) return;
+
+  const qrImg = document.getElementById("qr-image");
+  const spinner = document.getElementById("qr-loading-spinner");
+  if (qrImg) qrImg.style.display = "none";
+  if (spinner) spinner.style.display = "block";
+
+  try {
+    const res = await fetch(`/api/baileys/restart?clean_auth=${cleanAuth}`, { method: "POST" });
+    const data = await res.json();
+    notifySuccess("Reiniciando Baileys", data.message || "Generando nuevo código QR...");
+    lastKnownQRUrl = null;
+    setTimeout(checkBaileysStatus, 2000);
+  } catch (err) {
+    notifyError("Error", "No se pudo reiniciar el servicio de Baileys.");
+  }
+}
+
+async function unlinkWhatsApp() {
+  await restartBaileysQR(true);
+}
 
 function refreshQR() {
-  checkBaileysStatus();
+  restartBaileysQR(false);
 }
 
 async function saveAndGenerateQR() {
@@ -744,8 +833,8 @@ async function saveAndGenerateQR() {
       body: JSON.stringify({ whatsapp_bot_number: phone })
     });
     if (res.ok) {
-      notifySuccess("Línea Asignada", `Número ${phone} guardado exitosamente. Generando código QR...`);
-      refreshQR();
+      notifySuccess("Línea Asignada", `Número ${phone} guardado exitosamente.`);
+      checkBaileysStatus();
     } else {
       notifyError("Error", "No se pudo guardar el número de WhatsApp.");
     }
@@ -753,3 +842,7 @@ async function saveAndGenerateQR() {
     notifyError("Error", "Error al guardar el número de WhatsApp");
   }
 }
+
+// Iniciar sondeo de estado
+setInterval(checkBaileysStatus, 3000);
+setTimeout(checkBaileysStatus, 500);

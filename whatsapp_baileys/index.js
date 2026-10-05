@@ -16,6 +16,20 @@ const PYTHON_API_URL = process.env.PYTHON_API_URL || "http://localhost:8000/api/
 const QR_IMAGE_PATH = path.resolve(__dirname, "../app/static/images/baileys_qr.png");
 const AUTH_DIR = path.resolve(__dirname, "auth_info_baileys");
 
+async function notifyPython(payload, retries = 10) {
+  const pyBase = PYTHON_API_URL.replace("/api/chat/simulate", "");
+  for (let i = 0; i < retries; i++) {
+    try {
+      await axios.post(`${pyBase}/api/baileys/internal-status`, payload, { timeout: 3000 });
+      return;
+    } catch (e) {
+      if (i < retries - 1) {
+        await new Promise(r => setTimeout(r, 1500));
+      }
+    }
+  }
+}
+
 async function connectToWhatsApp() {
   console.log("==================================================");
   console.log("🚀 Iniciando cliente de WhatsApp con Baileys...");
@@ -39,7 +53,8 @@ async function connectToWhatsApp() {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      console.log("\n📲 ESCANEA ESTE CÓDIGO QR CON WHATSAPP EN TU TELÉFONO:\n");
+      console.log("\n📲 NUEVO CÓDIGO QR GENERADO POR BAILEYS\n");
+      console.log(`[BAILEYS_QR_DATA]${qr}[/BAILEYS_QR_DATA]`);
       qrcodeTerminal.generate(qr, { small: true });
 
       // Guardar también como imagen para el panel web
@@ -53,6 +68,13 @@ async function connectToWhatsApp() {
       } catch (err) {
         console.error("Error generando imagen QR:", err.message);
       }
+
+      // Notificar a Python con reintentos
+      notifyPython({
+        status: "QR",
+        qr: qr,
+        timestamp: Date.now()
+      });
     }
 
     if (connection === "close") {
@@ -64,6 +86,11 @@ async function connectToWhatsApp() {
         ", reconectando:",
         shouldReconnect
       );
+      console.log("[BAILEYS_STATUS]DISCONNECTED[/BAILEYS_STATUS]");
+
+      notifyPython({
+        status: "DISCONNECTED"
+      });
 
       // Si fue logout, limpiar sesión
       if (!shouldReconnect) {
@@ -86,6 +113,14 @@ async function connectToWhatsApp() {
           fs.unlinkSync(QR_IMAGE_PATH);
         }
       } catch (e) {}
+
+      const userPhone = sock.user?.id ? sock.user.id.split(":")[0] : "";
+      console.log(`[BAILEYS_CONNECTED]${userPhone}[/BAILEYS_CONNECTED]`);
+
+      notifyPython({
+        status: "CONNECTED",
+        phone: userPhone
+      });
     }
   });
 
