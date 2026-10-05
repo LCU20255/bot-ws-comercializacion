@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Panel de Intendencia & Comercialización Militar</title>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <!-- Bootstrap Icons -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="/static/css/admin.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Sidebar (Blanco con toques verdes y negros) -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-logo">
+          <i class="bi bi-shield-fill-check"></i>
+        </div>
+        <div class="brand-info">
+          <h2>INTENDENCIA</h2>
+          <span>Confección & Militar</span>
+        </div>
+      </div>
+
+      <nav class="nav-menu">
+        <button class="nav-item active" data-tab="orders">
+          <i class="bi bi-calendar-check"></i>
+          <span>Pedidos & Citas</span>
+          <span class="badge" id="badge-orders-count">0</span>
+        </button>
+        <button class="nav-item" data-tab="products">
+          <i class="bi bi-box-seam"></i>
+          <span>Catálogo Militar</span>
+        </button>
+        <button class="nav-item" data-tab="connection">
+          <i class="bi bi-qr-code-scan"></i>
+          <span>Vincular WhatsApp</span>
+        </button>
+        <button class="nav-item" data-tab="settings">
+          <i class="bi bi-sliders"></i>
+          <span>Horarios & Ajustes</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="system-status">
+          <span class="status-indicator online"></span>
+          <div>
+            <strong id="status-title">BOT ACTIVO</strong>
+            <small id="status-engine">WhatsApp Baileys</small>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Topbar (Negro con letras blancas) -->
+      <header class="topbar">
+        <div class="topbar-title">
+          <h1 id="page-title">Pedidos & Agendamientos de Retiro</h1>
+          <p id="page-subtitle">Control de solicitudes militares, retiro presencial y pagos.</p>
+        </div>
+        <div class="topbar-actions">
+          <!-- Toggle Modo Mantenimiento -->
+          <button class="btn btn-warning" id="btn-toggle-maint" onclick="toggleMaintenance()">
+            <i class="bi bi-wrench-adjustable-circle"></i> <span id="maint-label">Modo Mantenimiento: OFF</span>
+          </button>
+          <button class="btn btn-secondary" onclick="exportData('excel')">
+            <i class="bi bi-file-earmark-excel"></i> Descargar Excel (.xlsx)
+          </button>
+          <button class="btn btn-secondary" onclick="exportData('csv')">
+            <i class="bi bi-file-earmark-text"></i> Exportar CSV
+          </button>
+        </div>
+      </header>
+
+      <!-- Banner de Alerta si Mantenimiento está Activo -->
+      <div id="maint-alert-bar" class="maint-banner" style="display: none;">
+        <i class="bi bi-exclamation-triangle"></i>
+        <span><strong>MODO MANTENIMIENTO ACTIVO:</strong> El bot responderá a los clientes con el aviso configurado y registrará sus contactos en espera.</span>
+        <button class="btn btn-sm btn-secondary" onclick="toggleMaintenance()">Desactivar Ahora</button>
+      </div>
+
+      <!-- Content Views -->
+      <div class="tab-contents">
+        
+        <!-- TAB 1: ORDERS / PEDIDOS -->
+        <section id="tab-orders" class="tab-view active">
+          <!-- KPI Cards -->
+          <div class="kpi-grid">
+            <div class="kpi-card">
+              <div class="kpi-icon blue"><i class="bi bi-receipt"></i></div>
+              <div class="kpi-data">
+                <span class="kpi-label">Total Solicitudes</span>
+                <h3 id="kpi-total">0</h3>
+              </div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-icon yellow"><i class="bi bi-hourglass-split"></i></div>
+              <div class="kpi-data">
+                <span class="kpi-label">Pendientes por Atención</span>
+                <h3 id="kpi-pending">0</h3>
+              </div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-icon green"><i class="bi bi-check2-circle"></i></div>
+              <div class="kpi-data">
+                <span class="kpi-label">Confirmadas / Por Retirar</span>
+                <h3 id="kpi-confirmed">0</h3>
+              </div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-icon purple"><i class="bi bi-box-arrow-up-right"></i></div>
+              <div class="kpi-data">
+                <span class="kpi-label">Retiradas / Entregadas</span>
+                <h3 id="kpi-completed">0</h3>
+              </div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-icon orange"><i class="bi bi-moon-stars"></i></div>
+              <div class="kpi-data">
+                <span class="kpi-label">Fuera de Horario / Mantenimiento</span>
+                <h3 id="kpi-offhours">0</h3>
+              </div>
+            </div>
+          </div>
+
+          <!-- Filter & Search Toolbar -->
+          <div class="table-toolbar">
+            <div class="search-box">
+              <i class="bi bi-search"></i>
+              <input type="text" id="search-order" placeholder="Buscar por cliente, cédula o ticket (CIT-...)..." onkeyup="filterOrders()">
+            </div>
+            <div class="filter-actions">
+              <select id="filter-status" onchange="filterOrders()">
+                <option value="ALL">Todos los Estados</option>
+                <option value="PENDIENTE POR ATENCIÓN">PENDIENTE POR ATENCIÓN</option>
+                <option value="CONFIRMADA">CONFIRMADA</option>
+                <option value="POR RETIRAR">POR RETIRAR</option>
+                <option value="RETIRADA">RETIRADA</option>
+                <option value="EN ESPERA POR MANTENIMIENTO">EN ESPERA POR MANTENIMIENTO</option>
+                <option value="CANCELADA">CANCELADA</option>
+              </select>
+              <button class="btn btn-icon" onclick="loadOrders()" title="Recargar"><i class="bi bi-arrow-clockwise"></i></button>
+            </div>
+          </div>
+
+          <!-- Orders Table -->
+          <div class="card table-card">
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Ticket</th>
+                    <th>Cliente</th>
+                    <th>Cédula</th>
+                    <th>Teléfono</th>
+                    <th>Productos Solicitados (con Tallas)</th>
+                    <th>Total ($)</th>
+                    <th>Pago</th>
+                    <th>Retiro</th>
+                    <th>Estado</th>
+                    <th>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody id="orders-tbody">
+                  <tr>
+                    <td colspan="10" class="text-center text-muted" style="padding: 35px;">Cargando registros...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB 2: PRODUCTS (CATÁLOGO MILITAR) -->
+        <section id="tab-products" class="tab-view">
+          <div class="section-header">
+            <div>
+              <h2>Catálogo de Suministros & Textiles Militares</h2>
+              <p>Gestiona los artículos de intendencia, precios, tallas y fotos reales.</p>
+            </div>
+            <button class="btn btn-primary" onclick="openProductModal()">
+              <i class="bi bi-plus-circle"></i> Agregar Producto
+            </button>
+          </div>
+
+          <div class="products-grid" id="products-grid">
+            <!-- Dynamic military product cards -->
+          </div>
+        </section>
+
+        <!-- TAB 3: VINCULAR WHATSAPP (Baileys QR & Número) -->
+        <section id="tab-connection" class="tab-view">
+          <div class="connection-layout">
+            <div class="card text-center" style="max-width: 600px; margin: 0 auto;">
+              <div class="card-header">
+                <h3><i class="bi bi-qr-code-scan"></i> Vincular Línea de WhatsApp con Baileys</h3>
+              </div>
+              <div class="card-body">
+                
+                <!-- Input para configurar número de WhatsApp -->
+                <div class="form-group" style="max-width: 440px; margin: 0 auto 20px auto; text-align: left;">
+                  <label><strong>Número de WhatsApp Asignado (Ej: 0412-9912848 o +584129912848):</strong></label>
+                  <div style="display: flex; gap: 8px;">
+                    <input type="text" id="input-wa-number" placeholder="+584121234567" style="flex: 1;">
+                    <button class="btn btn-primary" onclick="saveAndGenerateQR()">
+                      <i class="bi bi-check-lg"></i> Guardar Número
+                    </button>
+                  </div>
+                </div>
+
+                <div class="qr-box" id="qr-container">
+                  <img id="qr-image" src="/static/images/baileys_qr.png" alt="Código QR Baileys" onerror="this.src='/api/qr'">
+                </div>
+
+                <div class="instructions-steps" style="text-align: left; max-width: 440px; margin: 12px auto; font-size: 0.85rem; color: #475569;">
+                  <ol style="padding-left: 20px; line-height: 1.6;">
+                    <li>Abre <strong>WhatsApp</strong> en el teléfono con la línea configurada.</li>
+                    <li>Toca en <strong>Dispositivos Vinculados > Vincular un dispositivo</strong>.</li>
+                    <li>Apunta tu cámara hacia el código QR de arriba para escanear.</li>
+                  </ol>
+                </div>
+
+                <div class="mt-3">
+                  <button class="btn btn-secondary" onclick="refreshQR()">
+                    <i class="bi bi-arrow-clockwise"></i> Recargar Código QR
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB 4: SETTINGS & HORARIOS -->
+        <section id="tab-settings" class="tab-view">
+          <div class="card">
+            <div class="card-header">
+              <h3><i class="bi bi-sliders"></i> Horarios, Mantenimiento y Parámetros</h3>
+            </div>
+            <div class="card-body">
+              <form id="settings-form" onsubmit="saveSettings(event)">
+                
+                <div class="form-row">
+                  <div class="form-group">
+                    <label>Hora Inicio Laboral (24H):</label>
+                    <input type="time" id="set_business_start" value="08:00" required>
+                  </div>
+                  <div class="form-group">
+                    <label>Hora Fin Laboral (24H):</label>
+                    <input type="time" id="set_business_end" value="17:00" required>
+                  </div>
+                </div>
+
+                <div class="form-group">
+                  <label>Mensaje Fuera de Horario (Enviado al escribir después de las 5:00 PM o antes de las 8:00 AM):</label>
+                  <textarea id="set_off_hours_msg" rows="3" required></textarea>
+                </div>
+
+                <div class="form-group">
+                  <label>Mensaje de Modo Mantenimiento:</label>
+                  <textarea id="set_maintenance_msg" rows="3" required></textarea>
+                </div>
+
+                <div class="form-row">
+                  <div class="form-group">
+                    <label>Nombre del Asesor Comercial:</label>
+                    <input type="text" id="set_advisor_name" required>
+                  </div>
+                  <div class="form-group">
+                    <label>WhatsApp del Asesor (Ej: +584121234567):</label>
+                    <input type="text" id="set_advisor_phone" required>
+                  </div>
+                </div>
+
+                <div class="form-row">
+                  <div class="form-group">
+                    <label>Dirección de la Sede para Retiro:</label>
+                    <input type="text" id="set_pickup_address" required>
+                  </div>
+                  <div class="form-group">
+                    <label>Horario Visible al Público:</label>
+                    <input type="text" id="set_pickup_hours" required>
+                  </div>
+                </div>
+
+                <div class="form-actions">
+                  <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-floppy"></i> Guardar Configuraciones
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </section>
+
+      </div>
+    </main>
+  </div>
+
+  <!-- MODAL 1: DETALLE COMPLETO DEL PEDIDO -->
+  <div class="modal" id="order-detail-modal">
+    <div class="modal-dialog" style="max-width: 620px;">
+      <div class="modal-header">
+        <div>
+          <h3 id="modal-ticket-title">Ticket: CIT-261005-001</h3>
+          <small id="modal-order-timestamp" class="text-muted">Registrado el 2026-10-05</small>
+        </div>
+        <button class="modal-close" onclick="closeOrderDetailModal()">&times;</button>
+      </div>
+      
+      <div class="modal-body" style="padding: 18px 20px;">
+        <div class="order-client-card">
+          <div class="client-row">
+            <div>
+              <span class="text-muted text-xs">CLIENTE:</span>
+              <h4 id="det-client-name" style="color: var(--military-light); font-size: 1.05rem;">CAP. MANUEL SILVA</h4>
+            </div>
+            <div>
+              <span class="text-muted text-xs">CÉDULA:</span>
+              <p id="det-cedula" style="font-weight: 700;">V-18920114</p>
+            </div>
+            <div>
+              <span class="text-muted text-xs">TELÉFONO:</span>
+              <p id="det-phone">+584128887766</p>
+            </div>
+          </div>
+        </div>
+
+        <h4 style="margin: 16px 0 8px 0; font-size: 0.85rem; text-transform: uppercase; color: #475569;">
+          <i class="bi bi-boxes"></i> Desglose de Artículos Solicitados:
+        </h4>
+        <div id="det-items-list" class="items-breakdown">
+          <!-- Dynamic items list with size -->
+        </div>
+
+        <div class="order-summary-box">
+          <div class="summary-line">
+            <span>Total Artículos:</span>
+            <strong id="det-total-items">4</strong>
+          </div>
+          <div class="summary-line">
+            <span>Método de Pago:</span>
+            <strong id="det-payment-method" style="color: #b45309;">EFECTIVO / DIVISAS (PAGO AL RETIRAR)</strong>
+          </div>
+          <div class="summary-line">
+            <span>Fecha y Hora de Retiro:</span>
+            <strong id="det-pickup-datetime"><i class="bi bi-calendar3"></i> 2026-10-12 &nbsp;|&nbsp; <i class="bi bi-clock"></i> 09:30 AM</strong>
+          </div>
+          <div class="summary-line total">
+            <span>Monto Total a Cancelar:</span>
+            <span id="det-total-amount" class="total-price">$80.00 Ref</span>
+          </div>
+        </div>
+
+        <div id="det-offhours-tag" style="margin-top: 12px; display: none;">
+          <span class="status-badge" style="background: #fef3c7; color: #b45309;">
+            <i class="bi bi-moon-stars"></i> Registrado Fuera de Horario Laboral / Mantenimiento
+          </span>
+        </div>
+      </div>
+
+      <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+        <div style="display: flex; gap: 6px;">
+          <button class="btn btn-warning btn-sm" id="btn-send-reminder" onclick="sendOrderReminder()">
+            <i class="bi bi-whatsapp"></i> Recordatorio
+          </button>
+          <button class="btn btn-primary btn-sm" id="btn-retake-order" onclick="retakeCurrentOrder()" style="display: none;">
+            <i class="bi bi-arrow-repeat"></i> Retomar Atención
+          </button>
+        </div>
+        <div style="display: flex; gap: 6px;">
+          <button class="btn btn-secondary btn-sm" onclick="openEditOrderModal()">
+            <i class="bi bi-pencil-square"></i> Editar
+          </button>
+          <button class="btn btn-danger btn-sm" onclick="deleteCurrentOrder()">
+            <i class="bi bi-trash3"></i> Eliminar
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 2: EDITAR PEDIDO -->
+  <div class="modal" id="order-edit-modal">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3>Editar Datos del Pedido</h3>
+        <button class="modal-close" onclick="closeEditOrderModal()">&times;</button>
+      </div>
+      <form id="edit-order-form" onsubmit="saveEditedOrder(event)">
+        <input type="hidden" id="edit_order_id">
+        <div class="form-group">
+          <label>Nombre y Apellido (MAYÚSCULAS) *</label>
+          <input type="text" id="edit_client_name" required>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Cédula *</label>
+            <input type="text" id="edit_cedula" required>
+          </div>
+          <div class="form-group">
+            <label>Teléfono *</label>
+            <input type="text" id="edit_phone" required>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Resumen de Artículos y Tallas *</label>
+          <input type="text" id="edit_items_summary" required>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Monto Total ($) *</label>
+            <input type="number" step="0.01" id="edit_total_amount" required>
+          </div>
+          <div class="form-group">
+            <label>Método de Pago</label>
+            <select id="edit_payment_method">
+              <option value="EFECTIVO / DIVISAS (PAGO AL RETIRAR)">EFECTIVO / DIVISAS (PAGO AL RETIRAR)</option>
+              <option value="TRANSFERENCIA BANCARIA">TRANSFERENCIA BANCARIA</option>
+              <option value="PAGO MÓVIL">PAGO MÓVIL</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Fecha de Retiro *</label>
+            <input type="date" id="edit_pickup_date" required>
+          </div>
+          <div class="form-group">
+            <label>Hora de Retiro *</label>
+            <input type="text" id="edit_pickup_time" required>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Estado del Pedido</label>
+          <select id="edit_status">
+            <option value="PENDIENTE POR ATENCIÓN">PENDIENTE POR ATENCIÓN</option>
+            <option value="CONFIRMADA">CONFIRMADA</option>
+            <option value="POR RETIRAR">POR RETIRAR</option>
+            <option value="RETIRADA">RETIRADA</option>
+            <option value="EN ESPERA POR MANTENIMIENTO">EN ESPERA POR MANTENIMIENTO</option>
+            <option value="CANCELADA">CANCELADA</option>
+          </select>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeEditOrderModal()">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Guardar Cambios</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL 3: CREAR/EDITAR PRODUCTO MILITAR (Con Talla y Subida de Imagen) -->
+  <div class="modal" id="product-modal">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 id="product-modal-title">Agregar Producto Militar</h3>
+        <button class="modal-close" onclick="closeProductModal()">&times;</button>
+      </div>
+      <form id="product-form" onsubmit="saveProduct(event)">
+        <input type="hidden" id="prod_id">
+        <div class="form-group">
+          <label>Nombre del Producto Militar (MAYÚSCULAS) *</label>
+          <input type="text" id="prod_name" required placeholder="Ej: UNIFORME PATRIOTA MILITAR">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Precio Numérico ($ Ref) *</label>
+            <input type="number" step="0.01" id="prod_price" required placeholder="35.00">
+          </div>
+          <div class="form-group">
+            <label>Categoría Militar</label>
+            <input type="text" id="prod_category" placeholder="Ej: TEXTIL, CALZADO, CONDECORACIONES">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>¿Requiere Talla? (Ropa, Botas o Calzado)</label>
+            <select id="prod_requires_size">
+              <option value="0">NO (Parches, Barras, Presillas, etc.)</option>
+              <option value="1">SÍ (Uniformes, Ropa, Botas, Calzado)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Stock Disponible</label>
+            <input type="number" id="prod_stock" value="100">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Foto Real del Producto (Subir archivo o pegar URL)</label>
+          <div style="display: flex; gap: 8px;">
+            <input type="text" id="prod_image" placeholder="/static/images/... o URL" style="flex: 1;">
+            <label class="btn btn-secondary" style="margin: 0; cursor: pointer;">
+              <i class="bi bi-upload"></i> Subir
+              <input type="file" id="file-image-upload" accept="image/*" style="display: none;" onchange="uploadProductImage(this)">
+            </label>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Descripción Técnica Reglamentaria</label>
+          <textarea id="prod_desc" rows="3" placeholder="Especificaciones, material, acabados reglamentarios..."></textarea>
+        </div>
+        <div class="form-group">
+          <label>Palabras Clave de Búsqueda</label>
+          <input type="text" id="prod_keywords" placeholder="uniforme, patriota, militar">
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeProductModal()">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Guardar Producto</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="/static/js/admin.js"></script>
+</body>
+</html>

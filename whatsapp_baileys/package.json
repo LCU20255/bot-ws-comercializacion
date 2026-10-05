@@ -1,0 +1,17 @@
+{
+  "name": "whatsapp-baileys-bridge",
+  "version": "1.0.0",
+  "description": "Puente Baileys para WhatsApp Bot Comercialización",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.12",
+    "axios": "^1.7.9",
+    "pino": "^9.6.0",
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0"
+  }
+}
