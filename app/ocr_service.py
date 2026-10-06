@@ -97,7 +97,11 @@ class ReceiptOCRService:
             return float(s.replace(",", ""))               # 1,250
         if "." in s:
             parts = s.split(".")
-            if len(parts) > 2 or (len(parts) == 2 and len(parts[1]) == 3):
+            if len(parts) > 2:
+                if len(parts[-1]) <= 2:
+                    return float("".join(parts[:-1]) + "." + parts[-1])
+                return float("".join(parts))
+            elif len(parts) == 2 and len(parts[1]) == 3:
                 return float(s.replace(".", ""))           # 19.544 (miles)
             return float(s)                                # 950.50
         return float(s)

@@ -63,20 +63,39 @@ if len(existing_p) == 0:
     })
 
 passed_tests = 0
-total_tests = 14
+total_tests = 15
 
 # -----------------------------------------------------------------------------
-# TEST 1: ACCESO DIRECTO AL CATÁLOGO SIN REGISTRO OBLIGATORIO
+# TEST 1: REGISTRO INICIAL OBLIGATORIO (NOMBRE, CÉDULA, TELÉFONO)
 # -----------------------------------------------------------------------------
-print("\n[TEST 1] Flujo de Acceso Directo al Catálogo (Sin Registro Previo)...")
+print("\n[TEST 1] Registro Inicial Obligatorio y Protección Anticolisión de Nombres...")
 phone_test = "+584120001122"
-reset_session(phone_test)
+reset_session(phone_test, keep_registration=False)
 
-# Paso 1.1: Saludo inicial abre inmediatamente el catálogo oficial
+# Paso 1.1: Saludo inicial solicita Nombre y Apellido
 r1 = bot_manager.process_message(phone_test, "Hola, buenas tardes")
-assert "CATÁLOGO" in r1["reply"] or "SIS-COMER" in r1["reply"], "Fallo: No mostró Catálogo al iniciar"
-assert r1["state"] == "CATALOG", "Fallo: El estado no es CATALOG"
-print("  ✓ Paso 1.1: Saludo recibido -> Catálogo SIS-COMER desplegado inmediatamente sin registro previo")
+assert r1["state"] == "REGISTER_NAME", f"Fallo: El estado no es REGISTER_NAME ({r1['state']})"
+assert "nombre y apellido" in r1["reply"].lower(), "Fallo: No solicitó Nombre y Apellido al iniciar"
+print("  ✓ Paso 1.1: Saludo inicial -> Bot exige Nombre y Apellido completo antes de catálogo")
+
+# Paso 1.2: El usuario escribe su nombre
+r2 = bot_manager.process_message(phone_test, "Carlos Pérez")
+assert r2["state"] == "REGISTER_CEDULA", f"Fallo: No avanzó a REGISTER_CEDULA ({r2['state']})"
+assert "Cédula de Identidad" in r2["reply"], "Fallo: No solicitó Cédula"
+print("  ✓ Paso 1.2: Nombre capturado ('Carlos Pérez') -> Bot solicita Cédula de Identidad")
+
+# Paso 1.3: El usuario ingresa su cédula
+r3 = bot_manager.process_message(phone_test, "V-19876543")
+assert r3["state"] == "REGISTER_PHONE", f"Fallo: No avanzó a REGISTER_PHONE ({r3['state']})"
+assert "teléfono de contacto" in r3["reply"], "Fallo: No solicitó teléfono"
+print("  ✓ Paso 1.3: Cédula capturada ('V-19876543') -> Bot solicita teléfono de contacto")
+
+# Paso 1.4: El usuario responde '1' para usar su WhatsApp
+r4 = bot_manager.process_message(phone_test, "1")
+assert r4["state"] == "CATALOG", f"Fallo: No avanzó a CATALOG tras registrar teléfono ({r4['state']})"
+assert "Carlos Pérez" in r4["reply"] or "CARLOS PÉREZ" in r4["reply"].upper(), "Fallo: No saludó con el nombre del cliente"
+assert "V-19876543" in r4["reply"], "Fallo: No reflejó la cédula en la confirmación de registro"
+print("  ✓ Paso 1.4: Registro completado -> Cliente guardado en BD, bienvenida personalizada y catálogo desplegado")
 passed_tests += 1
 
 # -----------------------------------------------------------------------------
@@ -176,10 +195,18 @@ print("\n[TEST 6] Pago Previo Obligatorio, Agendamiento y Emisión de Ticket Ofi
 phone_order = "+584143334455"
 reset_session(phone_order, keep_registration=False)
 
+# 6.0 Registro rápido en 1 bloque
+r_reg = bot_manager.process_message(phone_order, "Soy Juan Pérez CI 15432123 tlf 04143334455")
+assert r_reg["state"] == "CATALOG", "Fallo: No completó registro con datos en bloque"
+
 # 6.1 Selección de producto directo desde catálogo
 r_sel = bot_manager.process_message(phone_order, "1")
 if r_sel["state"] == "SELECTING_SIZE":
-    bot_manager.process_message(phone_order, "L")
+    r_sz = bot_manager.process_message(phone_order, "1")
+    if r_sz["state"] == "SELECTING_QUANTITY":
+        bot_manager.process_message(phone_order, "1")
+elif r_sel["state"] == "SELECTING_QUANTITY":
+    bot_manager.process_message(phone_order, "1")
 
 # 6.3 Proceder a pagar
 r_pay = bot_manager.process_message(phone_order, "2")
@@ -199,7 +226,9 @@ assert r_final["state"] == "COMPLETED", "Fallo: La orden no finalizó en COMPLET
 ticket = r_final["ticket_code"]
 assert ticket.startswith("CIT-"), f"Fallo: Formato de ticket inválido {ticket}"
 assert "TICKET OFICIAL SIS-COMER" in r_final["reply"], "Fallo: No contiene ticket oficial en respuesta"
-print(f"  ✓ Paso 6.3: Solicitud completada exitosamente -> Ticket emitido: {ticket}")
+assert "Equipo de Comercialización (Piso 1)" in r_final["reply"], "Fallo: No contiene instrucción de dirigirse a Piso 1"
+assert "Recepción" in r_final["reply"], "Fallo: No menciona área de Recepción"
+print(f"  ✓ Paso 6.3: Solicitud completada exitosamente -> Ticket emitido: {ticket} con instrucciones de Piso 1 y Recepción")
 passed_tests += 1
 
 # -----------------------------------------------------------------------------
@@ -339,7 +368,8 @@ passed_tests += 1
 # -----------------------------------------------------------------------------
 print("\n[TEST 13] Tallas Disponibles Configurables y Selección por Botón...")
 phone_size_test = "+584128889900"
-reset_session(phone_size_test)
+reset_session(phone_size_test, keep_registration=False)
+bot_manager.process_message(phone_size_test, "Soy Talla Test CI 11223344 tlf 04128889900")
 
 # Seleccionar dinámicamente el producto que requiere talla
 avail = get_available_catalog_products()
@@ -352,10 +382,14 @@ assert "[ 1️⃣ ]" in r_size_prompt["reply"], "Fallo: No mostró botones inter
 
 # Responder con el botón '2' (Segunda talla disponible)
 r_size_select = bot_manager.process_message(phone_size_test, "2")
-assert r_size_select["state"] == "CART_VIEW", "Fallo: No avanzó a carrito tras elegir botón de talla"
+assert r_size_select["state"] == "SELECTING_QUANTITY", "Fallo: No avanzó a solicitar cantidad tras elegir talla"
+
+# Responder con la cantidad '1'
+r_qty_select = bot_manager.process_message(phone_size_test, "1")
+assert r_qty_select["state"] == "CART_VIEW", "Fallo: No avanzó a carrito tras indicar cantidad"
 cart_item = get_session(phone_size_test)["cart"][0]
 assert cart_item["size"] is not None, "Fallo: Talla asignada es None"
-print(f"  ✓ Botón numérico '2' seleccionó exitosamente la talla '{cart_item['size']}' para '{target_sized_prod['name']}'")
+print(f"  ✓ Botón numérico '2' seleccionó talla '{cart_item['size']}' y solicitó cantidad '1' para '{target_sized_prod['name']}'")
 passed_tests += 1
 
 # -----------------------------------------------------------------------------
@@ -377,6 +411,25 @@ assert "0414-7778899" in r_pay_dyn["reply"], "Fallo: No reflejó teléfono de pa
 assert "Banco Banesco" in r_pay_dyn["reply"], "Fallo: No reflejó banco configurado"
 assert "INDUSTRIA MILITAR TIUNA CA" in r_pay_dyn["reply"], "Fallo: No reflejó titular configurado"
 print("  ✓ Datos de Pago Móvil y Transferencia configurados administrativamente se inyectaron en el mensaje de WhatsApp")
+passed_tests += 1
+
+# -----------------------------------------------------------------------------
+# TEST 15: EXCLUSIÓN DE PEDIDOS CANCELADOS EN MÉTRICAS Y GRÁFICA TOP PRODUCTOS
+# -----------------------------------------------------------------------------
+print("\n[TEST 15] Exclusión Estricta de Pedidos Cancelados en Top 5 y Métricas Financieras...")
+# Cancelar todas las órdenes existentes para verificar cálculo en cero
+conn = get_connection()
+cur = conn.cursor()
+cur.execute("UPDATE orders SET status = 'CANCELADA'")
+conn.commit()
+conn.close()
+
+from app.database import get_admin_metrics
+m_cancelled = get_admin_metrics()
+assert m_cancelled["total_orders"] == 0, f"Fallo: total_orders no es 0 ({m_cancelled['total_orders']})"
+assert m_cancelled["total_usd"] == 0.0, f"Fallo: total_usd no es 0.0 ({m_cancelled['total_usd']})"
+assert len(m_cancelled["top_products"]) == 0, f"Fallo: top_products aún incluye ventas canceladas: {m_cancelled['top_products']}"
+print("  ✓ Verificado: Al cancelar pedidos, la gráfica de Top Artículos se limpia a 0 sin mostrar ventas fantasmas")
 passed_tests += 1
 
 print("\n" + "=" * 80)

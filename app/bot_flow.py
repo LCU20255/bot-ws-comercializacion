@@ -16,7 +16,9 @@ from app.database import (
     get_all_config,
     is_maintenance_active,
     is_within_business_hours,
-    add_to_waitlist
+    add_to_waitlist,
+    upsert_client,
+    get_client_by_phone
 )
 
 from app.time_utils import now_vet, now_vet_date_str, now_vet_str, format_date_dmy, format_datetime_dmy
@@ -28,12 +30,15 @@ user_sessions: Dict[str, Dict[str, Any]] = {}
 
 def get_session(phone: str) -> Dict[str, Any]:
     if phone not in user_sessions:
+        existing_client = get_client_by_phone(phone)
+        is_reg = bool(existing_client and existing_client.get("name") and existing_client.get("cedula"))
         user_sessions[phone] = {
-            "state": "CATALOG",        # Inicia directamente en el catálogo sin registro previo obligatorio
+            "state": "CATALOG" if is_reg else "REGISTER_NAME",  # Si ya existe en BD va a catálogo, si no pide datos
+            "is_registered": is_reg,
             "cart": [],                # [{"product_id", "name", "qty", "unit_price", "subtotal", "size"}]
-            "client_name": None,       # MAYÚSCULAS
-            "cedula": None,            # MAYÚSCULAS
-            "contact_phone": None,     # Teléfono real de contacto (0412-1234567)
+            "client_name": existing_client.get("name") if is_reg else None,       # MAYÚSCULAS
+            "cedula": existing_client.get("cedula") if is_reg else None,            # MAYÚSCULAS
+            "contact_phone": existing_client.get("phone") if is_reg else None,     # Teléfono real de contacto
             "phone": phone,            # JID / ID de WhatsApp para envío
             "receipt_ref": None,
             "receipt_bank": None,
@@ -52,12 +57,18 @@ def get_session(phone: str) -> Dict[str, Any]:
 
 def reset_session(phone: str, keep_registration: bool = True):
     existing = user_sessions.get(phone, {})
+    existing_client = get_client_by_phone(phone) if not existing.get("client_name") else None
+    name = existing.get("client_name") or (existing_client.get("name") if existing_client else None)
+    ci = existing.get("cedula") or (existing_client.get("cedula") if existing_client else None)
+    c_phone = existing.get("contact_phone") or (existing_client.get("phone") if existing_client else None)
+    is_reg = bool(name and ci) if keep_registration else False
     user_sessions[phone] = {
-        "state": "CATALOG",
+        "state": "CATALOG" if is_reg else "REGISTER_NAME",
+        "is_registered": is_reg,
         "cart": [],
-        "client_name": existing.get("client_name") if keep_registration else None,
-        "cedula": existing.get("cedula") if keep_registration else None,
-        "contact_phone": existing.get("contact_phone") if keep_registration else None,
+        "client_name": name if is_reg else None,
+        "cedula": ci if is_reg else None,
+        "contact_phone": c_phone if is_reg else None,
         "phone": phone,
         "receipt_ref": None,
         "receipt_bank": None,
@@ -113,24 +124,12 @@ class BotFlowManager:
         if is_off_hours:
             session["is_off_hours"] = 1
 
-        # Extracción automática de datos del cliente (Nombre, Cédula, Teléfono) si se mencionan en el mensaje
-        self._try_extract_all_registration_data(clean_text, session, phone)
-
-        # Comandos globales de reinicio o volver al menú
-        if clean_text.lower() in ["0", "menu", "menú", "inicio", "empezar", "reset", "cancelar"]:
-            reset_session(phone, keep_registration=True)
-            return self._build_catalog_menu(session, is_off_hours=is_off_hours)
-
-        # Comando de Asesor Comercial
-        if clean_text.lower() in ["asesor", "humano", "asesoria", "asesoría", "ayuda"]:
-            return self._build_advisor_response(phone, advisor_name)
-
         # Analizar intención con NLU
         analysis = nlu.analyze_message(clean_text, current_state=current_state)
         matched_product = analysis["matched_product"]
         extracted = analysis["extracted_data"]
 
-        # 3. DETECCIÓN INTELIGENTE DE INCONFORMIDAD / QUEJAS / MENSAJES NEGATIVOS
+        # 3. DETECCIÓN PRIORITARIA DE INCONFORMIDAD / QUEJAS / MENSAJES NEGATIVOS
         if analysis["intent"] == "NEGATIVE_SENTIMENT":
             adv_phone = config.get("advisor_phone") or config.get("pagomovil_phone") or "0412-1234567"
             clean_digits = re.sub(r'\D', '', adv_phone)
@@ -164,6 +163,153 @@ class BotFlowManager:
                 "state": "WAITING_ADVISOR"
             }
 
+        # Comando directo de Asesor Comercial
+        if clean_text.lower() in ["asesor", "humano", "asesoria", "asesoría", "ayuda"]:
+            return self._build_advisor_response(phone, advisor_name)
+
+        # 4. VERIFICACIÓN OBLIGATORIA DE REGISTRO INICIAL (Nombre, Cédula, Teléfono)
+        if not session.get("is_registered"):
+            # 4.1 Intentar recuperar cliente previo de la base de datos por teléfono
+            existing_client = get_client_by_phone(phone)
+            if existing_client and existing_client.get("name") and existing_client.get("cedula"):
+                session["client_name"] = existing_client["name"]
+                session["cedula"] = existing_client["cedula"]
+                session["contact_phone"] = existing_client.get("phone") or phone
+                session["is_registered"] = True
+                session["state"] = "CATALOG"
+
+            # Intentar extracción en un solo bloque si el cliente envió sus datos completos
+            # Ej: "Buenas tardes soy Carlos Pérez V-18456123 tlf 0414-1234567"
+            self._try_extract_all_registration_data(clean_text, session, phone)
+            if session.get("client_name") and session.get("cedula") and session.get("contact_phone"):
+                session["is_registered"] = True
+                session["state"] = "CATALOG"
+                upsert_client(session["client_name"], session["cedula"], session["contact_phone"])
+                catalog_resp = self._build_catalog_menu(session, is_off_hours=is_off_hours)
+                welcome_header = (
+                    f"✅ *¡Registro completado exitosamente!*\n\n"
+                    f"👋 *Bienvenido(a), {session['client_name']}*\n"
+                    f"🪪 *Cédula:* {session['cedula']}\n"
+                    f"📱 *Teléfono:* {session['contact_phone']}\n"
+                    "──────────────────────\n"
+                )
+                catalog_resp["reply"] = welcome_header + catalog_resp["reply"]
+                return catalog_resp
+
+            greeting_words = {
+                "HOLA", "BUENOS", "BUENAS", "BUENO", "BUEN", "DIAS", "DÍAS", "TARDES", "NOCHES",
+                "SALUDOS", "SALUDO", "EPALE", "ÉPALE", "CORDIAL", "ESTIMADO", "ESTIMADA",
+                "DIA", "DÍA", "INICIO", "MENU", "MENÚ", "0", "EMPEZAR", "START", "RESET",
+                "POR", "FAVOR", "GRACIAS", "OK", "VALE", "LISTO"
+            }
+            text_clean_words = [w for w in re.sub(r'[^\w\s]', '', clean_text).upper().split() if w]
+
+            # Paso 1: Solicitar Nombre y Apellido
+            if current_state in ["REGISTER_NAME", "INIT"]:
+                if not text_clean_words or all(w in greeting_words for w in text_clean_words):
+                    session["state"] = "REGISTER_NAME"
+                    return self._prompt_initial_registration(session, phone)
+
+                valid_name_words = [
+                    w for w in text_clean_words 
+                    if w not in greeting_words and w not in {
+                        "PATRIOTA", "TIUNA", "CHAQUETA", "CHAQUETAS", "GORRA", "GORRAS", "BOTA", "BOTAS",
+                        "MILITAR", "MILITARES", "PARCHE", "PARCHES", "TACTICA", "TACTICO", "TACTICAS", "TACTICOS",
+                        "CAMPAÑA", "CAMPANA", "CAMUFLAJE", "VERDE", "NEGRO", "AZUL", "TALLA", "TALLAS",
+                        "COMPRAR", "QUIERO", "PRECIO", "PRECIOS", "COSTO", "COSTOS", "CUANTO", "CUÁNTO",
+                        "VALE", "TIENEN", "HAY", "STOCK", "DISPONIBLE", "CATALOGO", "CATÁLOGO", "PEDIDO",
+                        "ASESOR", "HUMANO", "AYUDA", "OPCION", "OPCIÓN", "UNIDADES", "CANTIDAD", "DESPACHO"
+                    } and len(w) >= 2 and not any(c.isdigit() for c in w)
+                ]
+                if valid_name_words:
+                    session["client_name"] = " ".join(valid_name_words[:4]).title()
+                    session["state"] = "REGISTER_CEDULA"
+                    return {
+                        "reply": (
+                            f"👍 Encantado, *{session['client_name']}*.\n\n"
+                            "🪪 *Por favor, ingrese su número de Cédula de Identidad:*\n"
+                            "*(Ejemplo: V-12345678 o 12345678)*"
+                        ),
+                        "image_url": None,
+                        "state": "REGISTER_CEDULA"
+                    }
+                else:
+                    session["state"] = "REGISTER_NAME"
+                    return {
+                        "reply": (
+                            "👋 *Bienvenido a SIS-COMER (Complejo Industrial Tiuna).*\n\n"
+                            "Para poder atenderle y registrar su solicitud comercial, por favor indíquenos:\n\n"
+                            "✍️ *¿Cuál es su Nombre y Apellido completo?*"
+                        ),
+                        "image_url": None,
+                        "state": "REGISTER_NAME"
+                    }
+
+            # Paso 2: Solicitar Cédula de Identidad
+            elif current_state == "REGISTER_CEDULA":
+                ci = nlu.extract_cedula(clean_text)
+                if ci:
+                    session["cedula"] = ci.upper()
+                    session["state"] = "REGISTER_PHONE"
+                    clean_ph = self._format_phone(phone)
+                    return {
+                        "reply": (
+                            f"🪪 Cédula registrada: *{session['cedula']}*.\n\n"
+                            "📱 *Por favor, indique su número de teléfono de contacto:*\n"
+                            "*(Ejemplo: 0414-1234567)*\n\n"
+                            f"👉 *O responda '1' para usar este mismo número de WhatsApp ({clean_ph or phone})*"
+                        ),
+                        "image_url": None,
+                        "state": "REGISTER_PHONE"
+                    }
+                else:
+                    return {
+                        "reply": "⚠️ Por favor ingrese un número de cédula válido (ejemplo: *V-12345678* o *12345678*).",
+                        "image_url": None,
+                        "state": "REGISTER_CEDULA"
+                    }
+
+            # Paso 3: Solicitar Teléfono de Contacto
+            elif current_state == "REGISTER_PHONE":
+                if clean_text.strip() == "1":
+                    contact_ph = self._format_phone(phone) or phone
+                else:
+                    extracted_ph = nlu.extract_phone(clean_text)
+                    contact_ph = self._format_phone(extracted_ph) if extracted_ph else None
+                
+                if contact_ph:
+                    session["contact_phone"] = contact_ph
+                    session["is_registered"] = True
+                    session["state"] = "CATALOG"
+                    upsert_client(session["client_name"], session["cedula"], session["contact_phone"])
+                    catalog_resp = self._build_catalog_menu(session, is_off_hours=is_off_hours)
+                    welcome_header = (
+                        f"✅ *¡Registro completado con éxito!*\n\n"
+                        f"👋 *Bienvenido(a), {session['client_name']}*\n"
+                        f"🪪 *Cédula:* {session['cedula']}\n"
+                        f"📱 *Teléfono:* {session['contact_phone']}\n"
+                        "──────────────────────\n"
+                    )
+                    catalog_resp["reply"] = welcome_header + catalog_resp["reply"]
+                    return catalog_resp
+                else:
+                    return {
+                        "reply": "⚠️ Por favor ingrese un número telefónico válido (ejemplo: *0414-1234567*) o responda *1* para usar este WhatsApp.",
+                        "image_url": None,
+                        "state": "REGISTER_PHONE"
+                    }
+            else:
+                session["state"] = "REGISTER_NAME"
+                return self._prompt_initial_registration(session, phone)
+
+        # -------------------------------------------------------------
+        # CLIENTE REGISTRADO — COMANDOS GLOBALES Y ATENCIÓN
+        # -------------------------------------------------------------
+        # Comandos globales de reinicio o volver al menú
+        if clean_text.lower() in ["0", "menu", "menú", "inicio", "empezar", "reset", "cancelar"]:
+            reset_session(phone, keep_registration=True)
+            return self._build_catalog_menu(session, is_off_hours=is_off_hours)
+
         # Si menciona un producto directamente desde cualquier estado que no sea pago o fecha
         if matched_product and current_state in ["CATALOG", "INIT"]:
             if matched_product.get("stock", 0) <= 0:
@@ -187,9 +333,22 @@ class BotFlowManager:
                 session["state"] = "SELECTING_SIZE"
                 return self._prompt_for_size(matched_product, session)
             else:
-                self._add_to_cart(session, matched_product, qty)
-                session["state"] = "CART_VIEW"
-                return self._build_cart_view(session)
+                if qty > 1:
+                    self._add_to_cart(session, matched_product, qty)
+                    session["state"] = "CART_VIEW"
+                    return self._build_cart_view(session)
+                else:
+                    session["pending_item"] = {"product": matched_product, "size": None}
+                    session["state"] = "SELECTING_QUANTITY"
+                    return {
+                        "reply": (
+                            f"📦 Ha seleccionado: *{matched_product['name']}* (${self._safe_float(matched_product.get('price', 0)):.2f} Ref)\n\n"
+                            "🔢 *¿Cuántas unidades desea solicitar?*\n"
+                            "*(Escriba el número deseado, por ejemplo: 1, 2, 3...)*"
+                        ),
+                        "image_url": None,
+                        "state": "SELECTING_QUANTITY"
+                    }
 
         # -------------------------------------------------------------
         # ESTADO 2: CATÁLOGO DINÁMICO (Stock > 0 y Tasa BCV Oficial)
@@ -198,13 +357,23 @@ class BotFlowManager:
             if analysis["intent"] == "CONNECT_ADVISOR":
                 return self._build_advisor_response(phone, advisor_name)
 
-            # Selección por número
             catalog_products = get_available_catalog_products()
             waitlist_idx = len(catalog_products) + 1
             advisor_idx = len(catalog_products) + 2
 
-            if analysis["intent"] == "NUMERIC_OPTION":
-                val = analysis.get("value")
+            num_matches = [int(n) for n in re.findall(r'\b\d+\b', clean_text)]
+            valid_prod_nums = [n for n in num_matches if 1 <= n <= len(catalog_products)]
+
+            # Multi-selección (ej: "1 y 2", "1, 3")
+            if len(valid_prod_nums) > 1:
+                for num_val in valid_prod_nums:
+                    p = catalog_products[num_val - 1]
+                    self._add_to_cart(session, p, qty=1)
+                session["state"] = "CART_VIEW"
+                return self._build_cart_view(session)
+
+            if analysis["intent"] == "NUMERIC_OPTION" or len(valid_prod_nums) == 1:
+                val = valid_prod_nums[0] if valid_prod_nums else analysis.get("value")
                 if val and 1 <= val <= len(catalog_products):
                     selected = catalog_products[val - 1]
                     if self._product_needs_size(selected):
@@ -212,17 +381,25 @@ class BotFlowManager:
                         session["state"] = "SELECTING_SIZE"
                         return self._prompt_for_size(selected, session)
                     else:
-                        self._add_to_cart(session, selected, qty=1)
-                        session["state"] = "CART_VIEW"
-                        return self._build_cart_view(session)
+                        session["pending_item"] = {"product": selected, "size": None}
+                        session["state"] = "SELECTING_QUANTITY"
+                        return {
+                            "reply": (
+                                f"📦 Ha seleccionado: *{selected['name']}* (${self._safe_float(selected.get('price', 0)):.2f} Ref)\n\n"
+                                "🔢 *¿Cuántas unidades desea solicitar?*\n"
+                                "*(Escriba el número deseado, por ejemplo: 1, 2, 3...)*"
+                            ),
+                            "image_url": None,
+                            "state": "SELECTING_QUANTITY"
+                        }
                 elif val == waitlist_idx:
                     session["state"] = "WAITLIST_PRODUCT"
                     return {
                         "reply": (
-                            "📝 *LISTA DE ESPERA Y DISPONIBILIDAD*\n"
-                            "*Complejo Industrial Tiuna — Equipo de Comercialización*\n\n"
-                            "Indíquenos: *¿Cuál es el producto que está buscando o requiere?*\n"
-                            "*(Ejemplo: Chaleco táctico, Chaqueta patriota, Botas, Condecoraciones, etc.)*"
+                            "📋 *SOLICITUD ESPECIAL Y LISTA DE ESPERA*\n"
+                            "🏭 *Complejo Industrial Tiuna — Equipo de Comercialización*\n\n"
+                            "Indíquenos: *¿Cuál es el modelo o producto especial que está buscando?*\n"
+                            "*(Ejemplo: Chaleco táctico, Chaqueta de gala, Botas de campaña, Condecoraciones, etc.)*"
                         ),
                         "image_url": None,
                         "state": "WAITLIST_PRODUCT"
@@ -241,7 +418,6 @@ class BotFlowManager:
 
             # Si nombró un producto directamente
             if matched_product:
-                # Verificar si el producto coincidente tiene stock <= 0
                 if matched_product.get("stock", 0) <= 0:
                     session["waitlist_product_name"] = matched_product["name"]
                     session["waitlist_product_id"] = matched_product["id"]
@@ -263,9 +439,22 @@ class BotFlowManager:
                     session["state"] = "SELECTING_SIZE"
                     return self._prompt_for_size(matched_product, session)
                 else:
-                    self._add_to_cart(session, matched_product, qty)
-                    session["state"] = "CART_VIEW"
-                    return self._build_cart_view(session)
+                    if qty > 1:
+                        self._add_to_cart(session, matched_product, qty)
+                        session["state"] = "CART_VIEW"
+                        return self._build_cart_view(session)
+                    else:
+                        session["pending_item"] = {"product": matched_product, "size": None}
+                        session["state"] = "SELECTING_QUANTITY"
+                        return {
+                            "reply": (
+                                f"📦 Ha seleccionado: *{matched_product['name']}* (${self._safe_float(matched_product.get('price', 0)):.2f} Ref)\n\n"
+                                "🔢 *¿Cuántas unidades desea solicitar?*\n"
+                                "*(Escriba el número deseado, por ejemplo: 1, 2, 3...)*"
+                            ),
+                            "image_url": None,
+                            "state": "SELECTING_QUANTITY"
+                        }
 
             # Si escribe texto indicando que no encuentra su producto o busca otro
             if any(w in clean_text.lower() for w in ["no encuentro", "no esta", "no está", "no aparece", "espera", "lista de espera", "otro"]):
@@ -401,7 +590,43 @@ class BotFlowManager:
             # Quitar prefijo "TALLA" si lo escribió manualmente (ej: "TALLA 42" -> "42")
             chosen_size = re.sub(r'^TALLA\s*', '', chosen_size).strip()
 
-            self._add_to_cart(session, pending["product"], pending["qty"], size=chosen_size)
+            pending["size"] = chosen_size
+            session["pending_size_options"] = None
+
+            # Si ya se especificó cantidad previa mayor a 1, añadir directamente
+            if pending.get("qty", 0) > 1:
+                self._add_to_cart(session, pending["product"], pending["qty"], size=chosen_size)
+                session["pending_item"] = None
+                session["state"] = "CART_VIEW"
+                return self._build_cart_view(session)
+
+            # Si no, solicitar la cantidad
+            session["state"] = "SELECTING_QUANTITY"
+            prod_name = pending["product"]["name"]
+            return {
+                "reply": (
+                    f"📏 Talla seleccionada: *{chosen_size}*.\n\n"
+                    f"🔢 *¿Cuántas unidades de {prod_name} desea solicitar?*\n"
+                    "*(Escriba el número deseado, por ejemplo: 1, 2, 3...)*"
+                ),
+                "image_url": None,
+                "state": "SELECTING_QUANTITY"
+            }
+
+        # -------------------------------------------------------------
+        # ESTADO 3.1: SELECCIÓN DE CANTIDAD
+        # -------------------------------------------------------------
+        elif current_state == "SELECTING_QUANTITY":
+            pending = session.get("pending_item")
+            if not pending:
+                session["state"] = "CATALOG"
+                return self._build_catalog_menu(session, is_off_hours=is_off_hours)
+
+            qty = self._extract_quantity(clean_text)
+            if qty <= 0:
+                qty = 1
+
+            self._add_to_cart(session, pending["product"], qty, size=pending.get("size"))
             session["pending_item"] = None
             session["pending_size_options"] = None
             session["state"] = "CART_VIEW"
@@ -462,9 +687,22 @@ class BotFlowManager:
                     session["state"] = "SELECTING_SIZE"
                     return self._prompt_for_size(target_prod, session)
                 else:
-                    self._add_to_cart(session, target_prod, qty)
-                    session["state"] = "CART_VIEW"
-                    return self._build_cart_view(session)
+                    if qty > 1:
+                        self._add_to_cart(session, target_prod, qty)
+                        session["state"] = "CART_VIEW"
+                        return self._build_cart_view(session)
+                    else:
+                        session["pending_item"] = {"product": target_prod, "size": None}
+                        session["state"] = "SELECTING_QUANTITY"
+                        return {
+                            "reply": (
+                                f"📦 Ha seleccionado: *{target_prod['name']}* (${self._safe_float(target_prod.get('price', 0)):.2f} Ref)\n\n"
+                                "🔢 *¿Cuántas unidades desea solicitar?*\n"
+                                "*(Escriba el número deseado, por ejemplo: 1, 2, 3...)*"
+                            ),
+                            "image_url": None,
+                            "state": "SELECTING_QUANTITY"
+                        }
 
             return {
                 "reply": "⚠️ No pudimos identificar el producto adicional. Por favor indique el número de la lista o su nombre (ej: *1 gorra* o *2 parches*):",
@@ -760,9 +998,9 @@ class BotFlowManager:
                 f"⏰ *HORA ASIGNADA:* {saved['pickup_time']}\n"
                 f"📍 *SEDE DE RETIRO:* {pickup_address}\n\n"
                 "📌 *INSTRUCCIONES PARA EL RETIRO:*\n"
-                "1. Presentar su Cédula de Identidad física en la taquilla de atención.\n"
-                f"2. Mostrar este ticket de atención: *{ticket_code}*.\n"
-                "3. Su orden ya ha sido registrada en el sistema de confección y despacho.\n\n"
+                "1. Al llegar a nuestra sede, diríjase al área de *Recepción* e indique que se dirige con el *Equipo de Comercialización (Piso 1)*.\n"
+                f"2. En recepción notifique que viene a retirar su orden de: *{saved['items_summary']}*.\n"
+                f"3. En el Piso 1 presente su Cédula de Identidad (*{saved['cedula']}*) y muestre este ticket oficial: *{ticket_code}* para validar su atención y hacerle entrega inmediata de su producto.\n\n"
                 "¡Gracias por su compra en SIS-COMER! Escriba *Menú* para realizar una nueva solicitud."
             ),
             "image_url": None,
@@ -799,20 +1037,33 @@ class BotFlowManager:
         elif text.strip() == "1" and self._is_valid_phone(phone) and not session.get("contact_phone"):
             session["contact_phone"] = self._format_phone(phone)
 
-        # Si el texto es solo saludos o comandos (con o sin puntuación), no asignarlo como nombre
-        text_clean_words = re.sub(r'[^\w\s]', '', text).upper().split()
-        greeting_words = {"HOLA", "BUENOS", "DIAS", "DÍAS", "TARDES", "NOCHES", "SALUDOS", "EPALE", "BUEN", "DIA", "DÍA", "INICIO", "MENU", "0", "AYUDA"}
+        # Palabras de saludo y catálogo que no deben ser tomadas como nombre de persona
+        greeting_words = {
+            "HOLA", "BUENOS", "BUENAS", "BUENO", "BUEN", "DIAS", "DÍAS", "TARDES", "NOCHES",
+            "SALUDOS", "SALUDO", "EPALE", "ÉPALE", "CORDIAL", "ESTIMADO", "ESTIMADA",
+            "DIA", "DÍA", "INICIO", "MENU", "MENÚ", "0", "AYUDA", "POR", "FAVOR", "GRACIAS"
+        }
+        product_blacklist = {
+            "PATRIOTA", "TIUNA", "CHAQUETA", "CHAQUETAS", "GORRA", "GORRAS", "BOTA", "BOTAS",
+            "MILITAR", "MILITARES", "PARCHE", "PARCHES", "TACTICA", "TACTICO", "TACTICAS", "TACTICOS",
+            "CAMPAÑA", "CAMPANA", "CAMUFLAJE", "VERDE", "NEGRO", "AZUL", "TALLA", "TALLAS",
+            "COMPRAR", "QUIERO", "PRECIO", "PRECIOS", "COSTO", "COSTOS", "CUANTO", "CUÁNTO",
+            "VALE", "TIENEN", "HAY", "STOCK", "DISPONIBLE", "CATALOGO", "CATÁLOGO", "PEDIDO",
+            "ASESOR", "HUMANO", "AYUDA", "OPCION", "OPCIÓN", "UNIDADES", "CANTIDAD", "DESPACHO",
+            "RETIRAR", "RETIRO", "PAGO", "TRANSFERENCIA", "PAGOMOVIL"
+        }
         
-        if text_clean_words and all(w in greeting_words for w in text_clean_words):
+        text_clean_words = re.sub(r'[^\w\s]', '', text).upper().split()
+        if text_clean_words and all(w in (greeting_words | product_blacklist) for w in text_clean_words):
             return
 
-        # Si no tiene nombre y el texto tiene palabras que no son saludos
+        # Si no tiene nombre y el texto tiene palabras válidas de persona
         if not session.get("client_name"):
-            valid_words = [w for w in text_clean_words if w not in greeting_words and len(w) >= 2 and not any(c.isdigit() for c in w)]
+            valid_words = [w for w in text_clean_words if w not in greeting_words and w not in product_blacklist and len(w) >= 2 and not any(c.isdigit() for c in w)]
             if len(valid_words) >= 2:
-                session["client_name"] = " ".join(valid_words[:4])
+                session["client_name"] = " ".join(valid_words[:4]).title()
             elif len(valid_words) == 1 and session.get("state") == "REGISTER_NAME":
-                session["client_name"] = valid_words[0]
+                session["client_name"] = valid_words[0].title()
 
     # -------------------------------------------------------------
     # MENÚS Y VISTAS
@@ -827,7 +1078,11 @@ class BotFlowManager:
             lines.append("🌙 *AVISO DE HORARIO:* Fuera de horario laboral presencial (8:00 AM a 5:00 PM). Puede realizar su solicitud y pago en este momento y su retiro quedará programado.")
             lines.append("──────────────────────")
 
-        lines.append("👋 ¡Bienvenido! Soy *SIS-COMER*, tu asistente virtual.")
+        client_name = session.get("client_name")
+        if client_name and client_name != "CLIENTE":
+            lines.append(f"👋 ¡Hola, *{client_name}*! Bienvenido(a) a *SIS-COMER*.")
+        else:
+            lines.append("👋 ¡Bienvenido! Soy *SIS-COMER*, tu asistente virtual.")
         lines.append("🏭 *Complejo Industrial Tiuna — Equipo de Comercialización*")
         lines.append(f"📊 *Tasa Oficial BCV:* Bs. {bcv_rate:,.2f} / $\n")
 
@@ -848,11 +1103,11 @@ class BotFlowManager:
             waitlist_idx = len(products) + 1
             advisor_idx = len(products) + 2
 
-            lines.append(f"\n[ {waitlist_idx}️⃣ ] 🔍 *¿Buscas otro producto o sin existencia? (Lista de espera)*")
+            lines.append(f"\n[ {waitlist_idx}️⃣ ] 📋 *¿Buscas otro modelo o artículo especial? Avísanos aquí*")
             lines.append(f"[ {advisor_idx}️⃣ ] 👨‍💼 *Hablar con un Asesor Comercial*")
             lines.append("\n👉 *¿Qué artículo desea solicitar?*")
             lines.append(f"• Toca o responde con el *número del producto (1-{len(products)})* o su nombre.")
-            lines.append(f"• Responde *{waitlist_idx}* si buscas un producto no listado o sin stock.")
+            lines.append(f"• Responde *{waitlist_idx}* si buscas otro modelo o pedido especial.")
             lines.append(f"• Responde *{advisor_idx}* para atención directa con un asesor.")
             lines.append("• Escribe *0* para reiniciar el menú.")
 

@@ -169,21 +169,45 @@ async function connectToWhatsApp() {
         }
       }
 
+      // Desenvolver mensajes anidados (ephemeral, viewOnce, viewOnceV2, etc.)
+      let messageContent = msg.message;
+      while (
+        messageContent?.ephemeralMessage ||
+        messageContent?.viewOnceMessage ||
+        messageContent?.viewOnceMessageV2 ||
+        messageContent?.documentWithCaptionMessage
+      ) {
+        messageContent =
+          messageContent?.ephemeralMessage?.message ||
+          messageContent?.viewOnceMessage?.message ||
+          messageContent?.viewOnceMessageV2?.message ||
+          messageContent?.documentWithCaptionMessage?.message;
+      }
+
       // Extraer texto del mensaje o imagen
       let text =
-        msg.message?.conversation ||
-        msg.message?.extendedTextMessage?.text ||
-        msg.message?.imageMessage?.caption ||
-        msg.message?.buttonsResponseMessage?.selectedButtonId ||
-        msg.message?.listResponseMessage?.singleSelectReply?.selectedRowId ||
+        messageContent?.conversation ||
+        messageContent?.extendedTextMessage?.text ||
+        messageContent?.imageMessage?.caption ||
+        messageContent?.documentMessage?.caption ||
+        messageContent?.buttonsResponseMessage?.selectedButtonId ||
+        messageContent?.listResponseMessage?.singleSelectReply?.selectedRowId ||
         "";
 
       let imageBase64 = null;
-      if (msg.message?.imageMessage) {
+      const hasImage =
+        !!messageContent?.imageMessage ||
+        (messageContent?.documentMessage && messageContent?.documentMessage?.mimetype?.startsWith("image/"));
+
+      if (hasImage) {
         try {
           const { downloadMediaMessage } = require("@whiskeysockets/baileys");
+          const msgToDownload = {
+            key: msg.key,
+            message: messageContent
+          };
           const buffer = await downloadMediaMessage(
-            msg,
+            msgToDownload,
             "buffer",
             {},
             {

@@ -1,6 +1,7 @@
 import sqlite3
 import json
 import logging
+import re
 from datetime import datetime, time
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -344,6 +345,19 @@ def upsert_client(name: str, cedula: str, phone: str) -> int:
     conn.commit()
     conn.close()
     return client_id
+
+def get_client_by_phone(phone: str) -> Optional[Dict[str, Any]]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    clean_phone = str(phone).strip()
+    digits = re.sub(r'\D', '', clean_phone)
+    cursor.execute("SELECT * FROM clients WHERE phone = ?", (clean_phone,))
+    row = cursor.fetchone()
+    if not row and len(digits) >= 7:
+        cursor.execute("SELECT * FROM clients WHERE phone LIKE ?", (f"%{digits[-7:]}%",))
+        row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
 
 # ----------------- ORDERS CRUD -----------------
 def create_order(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -801,18 +815,18 @@ def get_financial_and_sales_metrics() -> Dict[str, Any]:
     conn = get_connection()
     cursor = conn.cursor()
     
-    # Total ventas $ y Bs
+    # Total ventas $ y Bs (excluyendo canceladas y anuladas)
     cursor.execute("""
         SELECT 
             COUNT(*) as total_orders,
             COALESCE(SUM(amount_usd), 0.0) as total_usd,
             COALESCE(SUM(amount_ves), 0.0) as total_ves
         FROM orders 
-        WHERE status != 'CANCELADA'
+        WHERE UPPER(status) NOT IN ('CANCELADA', 'CANCELADO', 'ANULADO', 'ANULADA')
     """)
     totals = dict(cursor.fetchone())
     
-    # Ventas de hoy en hora oficial de Venezuela
+    # Ventas de hoy en hora oficial de Venezuela (excluyendo canceladas y anuladas)
     today_str = now_vet_date_str()
     cursor.execute("""
         SELECT 
@@ -820,7 +834,7 @@ def get_financial_and_sales_metrics() -> Dict[str, Any]:
             COALESCE(SUM(amount_usd), 0.0) as today_usd,
             COALESCE(SUM(amount_ves), 0.0) as today_ves
         FROM orders 
-        WHERE status != 'CANCELADA' AND date(created_at) = ?
+        WHERE UPPER(status) NOT IN ('CANCELADA', 'CANCELADO', 'ANULADO', 'ANULADA') AND date(created_at) = ?
     """, (today_str,))
     today_totals = dict(cursor.fetchone())
     
@@ -828,17 +842,32 @@ def get_financial_and_sales_metrics() -> Dict[str, Any]:
     cursor.execute("SELECT COUNT(*) as count FROM products WHERE is_active = 1 AND stock <= 20")
     low_stock_count = cursor.fetchone()["count"]
     
-    # Top 5 productos vendidos
+    # Top 5 productos vendidos exclusivamente de órdenes activas / concretadas (NO canceladas)
     cursor.execute("""
-        SELECT p.name, ABS(SUM(m.quantity)) as units_sold
-        FROM inventory_movements m
-        JOIN products p ON m.product_id = p.id
-        WHERE m.movement_type = 'SALIDA_VENTA'
-        GROUP BY p.id
-        ORDER BY units_sold DESC
-        LIMIT 5
+        SELECT items_detail
+        FROM orders
+        WHERE UPPER(status) NOT IN ('CANCELADA', 'CANCELADO', 'ANULADO', 'ANULADA')
     """)
-    top_products = [dict(r) for r in cursor.fetchall()]
+    rows = cursor.fetchall()
+    prod_counts = {}
+    for r in rows:
+        raw = r["items_detail"]
+        if not raw:
+            continue
+        try:
+            items = json.loads(raw) if isinstance(raw, str) else raw
+            if isinstance(items, list):
+                for it in items:
+                    name = str(it.get("name", "PRODUCTO")).strip()
+                    qty = int(it.get("qty", 1))
+                    prod_counts[name] = prod_counts.get(name, 0) + qty
+        except Exception:
+            pass
+            
+    top_products = [
+        {"name": name, "units_sold": qty}
+        for name, qty in sorted(prod_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+    ]
     
     # Desglose de estados
     cursor.execute("SELECT status, COUNT(*) as count FROM orders GROUP BY status")
@@ -858,6 +887,7 @@ def get_financial_and_sales_metrics() -> Dict[str, Any]:
     }
 
 # Compatibilidad hacia atrás
+get_admin_metrics = get_financial_and_sales_metrics
 get_appointments = get_orders
 export_appointments_df = export_orders_df
 
