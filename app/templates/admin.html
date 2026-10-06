@@ -3,27 +3,27 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Panel de Intendencia & Comercialización Militar</title>
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
-  <!-- Google Fonts -->
+  <title>SIS-COMER | Complejo Industrial Tiuna</title>
+  <link rel="icon" type="image/png" href="/static/images/logo_tiuna.png">
+  <!-- Google Fonts: Exo -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Exo:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,700&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
   <!-- Bootstrap Icons -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <link rel="stylesheet" href="/static/css/admin.css">
 </head>
 <body>
   <div class="app-container">
-    <!-- Sidebar (Blanco con toques verdes y negros) -->
+    <!-- Sidebar -->
     <aside class="sidebar">
       <div class="brand">
-        <div class="brand-logo">
-          <i class="bi bi-shield-fill-check"></i>
-        </div>
+        <img src="/static/images/logo_tiuna.png" alt="Complejo Industrial Tiuna" class="brand-logo-img">
         <div class="brand-info">
-          <h2>INTENDENCIA</h2>
-          <span>Confección & Militar</span>
+          <h2>SIS-COMER</h2>
+          <span>Complejo Industrial Tiuna</span>
         </div>
       </div>
 
@@ -32,6 +32,15 @@
           <i class="bi bi-calendar-check"></i>
           <span>Pedidos & Citas</span>
           <span class="badge" id="badge-orders-count">0</span>
+        </button>
+        <button class="nav-item" data-tab="inventory">
+          <i class="bi bi-stack"></i>
+          <span>Inventario & Kardex</span>
+          <span class="badge badge-danger" id="badge-low-stock" style="display:none">0</span>
+        </button>
+        <button class="nav-item" data-tab="metrics">
+          <i class="bi bi-graph-up-arrow"></i>
+          <span>Ventas & Métricas</span>
         </button>
         <button class="nav-item" data-tab="products">
           <i class="bi bi-box-seam"></i>
@@ -51,7 +60,7 @@
         <div class="system-status">
           <span class="status-indicator online"></span>
           <div>
-            <strong id="status-title">BOT ACTIVO</strong>
+            <strong id="status-title">SIS-COMER ACTIVO</strong>
             <small id="status-engine">WhatsApp Baileys</small>
           </div>
         </div>
@@ -60,19 +69,26 @@
 
     <!-- Main Content Area -->
     <main class="main-content">
-      <!-- Topbar (Negro con letras blancas) -->
+      <!-- Topbar -->
       <header class="topbar">
         <div class="topbar-title">
           <h1 id="page-title">Pedidos & Agendamientos de Retiro</h1>
-          <p id="page-subtitle">Control de solicitudes militares, retiro presencial y pagos.</p>
+          <p id="page-subtitle">Control de solicitudes militares, pagos previos OCR y entrega.</p>
         </div>
+        
+        <!-- BCV Live Ticker -->
+        <div class="bcv-ticker" title="Tasa oficial del Banco Central de Venezuela">
+          <i class="bi bi-bank"></i>
+          <span>Tasa BCV Oficial:</span>
+          <strong id="topbar-bcv-rate">Consultando...</strong>
+        </div>
+
         <div class="topbar-actions">
-          <!-- Toggle Modo Mantenimiento -->
           <button class="btn btn-warning" id="btn-toggle-maint" onclick="toggleMaintenance()">
-            <i class="bi bi-wrench-adjustable-circle"></i> <span id="maint-label">Modo Mantenimiento: OFF</span>
+            <i class="bi bi-wrench-adjustable-circle"></i> <span id="maint-label">Mantenimiento: OFF</span>
           </button>
           <button class="btn btn-secondary" onclick="exportData('excel')">
-            <i class="bi bi-file-earmark-excel"></i> Descargar Excel (.xlsx)
+            <i class="bi bi-file-earmark-excel"></i> Descargar Excel
           </button>
           <button class="btn btn-secondary" onclick="exportData('csv')">
             <i class="bi bi-file-earmark-text"></i> Exportar CSV
@@ -83,7 +99,7 @@
       <!-- Banner de Alerta si Mantenimiento está Activo -->
       <div id="maint-alert-bar" class="maint-banner" style="display: none;">
         <i class="bi bi-exclamation-triangle"></i>
-        <span><strong>MODO MANTENIMIENTO ACTIVO:</strong> El bot responderá a los clientes con el aviso configurado y registrará sus contactos en espera.</span>
+        <span><strong>MODO MANTENIMIENTO ACTIVO:</strong> El bot responderá con aviso y registrará solicitudes en espera.</span>
         <button class="btn btn-sm btn-secondary" onclick="toggleMaintenance()">Desactivar Ahora</button>
       </div>
 
@@ -102,6 +118,14 @@
               </div>
             </div>
             <div class="kpi-card">
+              <div class="kpi-icon green"><i class="bi bi-currency-dollar"></i></div>
+              <div class="kpi-data">
+                <span class="kpi-label">Ventas Facturadas</span>
+                <h3 id="kpi-sales-usd">$0.00 Ref</h3>
+                <small id="kpi-sales-ves" style="color: #64748b; font-weight: 600;">Bs. 0,00</small>
+              </div>
+            </div>
+            <div class="kpi-card">
               <div class="kpi-icon yellow"><i class="bi bi-hourglass-split"></i></div>
               <div class="kpi-data">
                 <span class="kpi-label">Pendientes por Atención</span>
@@ -109,24 +133,10 @@
               </div>
             </div>
             <div class="kpi-card">
-              <div class="kpi-icon green"><i class="bi bi-check2-circle"></i></div>
+              <div class="kpi-icon red"><i class="bi bi-exclamation-triangle-fill"></i></div>
               <div class="kpi-data">
-                <span class="kpi-label">Confirmadas / Por Retirar</span>
-                <h3 id="kpi-confirmed">0</h3>
-              </div>
-            </div>
-            <div class="kpi-card">
-              <div class="kpi-icon purple"><i class="bi bi-box-arrow-up-right"></i></div>
-              <div class="kpi-data">
-                <span class="kpi-label">Retiradas / Entregadas</span>
-                <h3 id="kpi-completed">0</h3>
-              </div>
-            </div>
-            <div class="kpi-card">
-              <div class="kpi-icon orange"><i class="bi bi-moon-stars"></i></div>
-              <div class="kpi-data">
-                <span class="kpi-label">Fuera de Horario / Mantenimiento</span>
-                <h3 id="kpi-offhours">0</h3>
+                <span class="kpi-label">Stock Crítico (Taller)</span>
+                <h3 id="kpi-low-stock">0</h3>
               </div>
             </div>
           </div>
@@ -161,9 +171,9 @@
                     <th>Cliente</th>
                     <th>Cédula</th>
                     <th>Teléfono</th>
-                    <th>Productos Solicitados (con Tallas)</th>
-                    <th>Total ($)</th>
-                    <th>Pago</th>
+                    <th>Productos (con Tallas)</th>
+                    <th>Monto ($ / Bs)</th>
+                    <th>Comprobante OCR</th>
                     <th>Retiro</th>
                     <th>Estado</th>
                     <th>Acciones</th>
@@ -171,7 +181,7 @@
                 </thead>
                 <tbody id="orders-tbody">
                   <tr>
-                    <td colspan="10" class="text-center text-muted" style="padding: 35px;">Cargando registros...</td>
+                    <td colspan="10" class="text-center text-muted" style="padding: 35px;">Cargando solicitudes...</td>
                   </tr>
                 </tbody>
               </table>
@@ -179,12 +189,134 @@
           </div>
         </section>
 
-        <!-- TAB 2: PRODUCTS (CATÁLOGO MILITAR) -->
+        <!-- TAB 2: INVENTARIO & KARDEX MILITAR -->
+        <section id="tab-inventory" class="tab-view">
+          <div class="section-header">
+            <div>
+              <h2>Control de Inventario & Kardex Militar</h2>
+              <p>Auditoría de confección, entradas de taller y salidas por ventas en SIS-COMER.</p>
+            </div>
+            <button class="btn btn-primary" onclick="openBatchStockModal()">
+              <i class="bi bi-plus-square"></i> Ingresar Lote de Confección
+            </button>
+          </div>
+
+          <!-- Banner Alerta de Stock Bajo si existe -->
+          <div id="low-stock-alert-box" class="stock-alert-banner" style="display: none;">
+            <i class="bi bi-exclamation-octagon-fill"></i>
+            <div>
+              <strong>ALERTA DE CONFECCIÓN:</strong> Artículos con existencia igual o inferior a 20 unidades. Se requiere orden de taller.
+              <div id="low-stock-list" class="low-stock-badges-container"></div>
+            </div>
+          </div>
+
+          <!-- Tabla de Movimientos Kardex -->
+          <div class="card table-card" style="margin-top: 15px;">
+            <div class="card-header" style="padding: 16px 20px; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center;">
+              <h3 style="font-size: 1.1rem; color: #0f172a; margin: 0;"><i class="bi bi-journal-text"></i> Historial de Movimientos Kardex</h3>
+              <button class="btn btn-sm btn-secondary" onclick="loadInventoryKardex()"><i class="bi bi-arrow-clockwise"></i> Actualizar</button>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Fecha y Hora</th>
+                    <th>Producto</th>
+                    <th>Tipo Movimiento</th>
+                    <th>Cantidad</th>
+                    <th>Stock Previo</th>
+                    <th>Nuevo Stock</th>
+                    <th>Responsable / Ticket</th>
+                    <th>Observaciones</th>
+                  </tr>
+                </thead>
+                <tbody id="kardex-tbody">
+                  <tr>
+                    <td colspan="9" class="text-center text-muted" style="padding: 35px;">Cargando kardex...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB 3: VENTAS & MÉTRICAS (CHART.JS) -->
+        <section id="tab-metrics" class="tab-view">
+          <div class="section-header">
+            <div>
+              <h2>Análisis Comercial & Rendimiento de Ventas</h2>
+              <p>Facturación consolidada en Divisas ($) y Bolívares (Bs) a tasa BCV oficial.</p>
+            </div>
+            <button class="btn btn-secondary" onclick="loadFinancialMetrics()">
+              <i class="bi bi-arrow-clockwise"></i> Actualizar Métricas
+            </button>
+          </div>
+
+          <!-- Métricas Resumen -->
+          <div class="kpi-grid">
+            <div class="kpi-card">
+              <div class="kpi-icon green"><i class="bi bi-cash-stack"></i></div>
+              <div class="kpi-data">
+                <span class="kpi-label">Ventas Totales ($)</span>
+                <h3 id="metric-total-usd">$0.00 REF</h3>
+                <small id="metric-total-ves" style="color: #64748b; font-weight: 700;">Bs. 0,00</small>
+              </div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-icon blue"><i class="bi bi-calendar-event"></i></div>
+              <div class="kpi-data">
+                <span class="kpi-label">Ventas del Día de Hoy</span>
+                <h3 id="metric-today-usd">$0.00 REF</h3>
+                <small id="metric-today-ves" style="color: #64748b; font-weight: 700;">Bs. 0,00</small>
+              </div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-icon purple"><i class="bi bi-bag-check"></i></div>
+              <div class="kpi-data">
+                <span class="kpi-label">Pedidos Concretados</span>
+                <h3 id="metric-total-orders">0</h3>
+                <small id="metric-today-orders" style="color: #64748b;">Hoy: 0 pedidos</small>
+              </div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-icon orange"><i class="bi bi-bank"></i></div>
+              <div class="kpi-data">
+                <span class="kpi-label">Tasa Oficial BCV</span>
+                <h3 id="metric-bcv-rate">Bs. 0,00</h3>
+                <small style="color: #166534; font-weight: 600;">Actualizada en vivo</small>
+              </div>
+            </div>
+          </div>
+
+          <!-- Gráficas Chart.js -->
+          <div class="charts-grid">
+            <div class="card chart-card">
+              <div class="chart-header">
+                <h3><i class="bi bi-bar-chart-fill"></i> Top 5 Artículos Más Solicitados</h3>
+              </div>
+              <div class="chart-body">
+                <canvas id="chartTopProducts"></canvas>
+              </div>
+            </div>
+
+            <div class="card chart-card">
+              <div class="chart-header">
+                <h3><i class="bi bi-pie-chart-fill"></i> Distribución de Estados de Pedidos</h3>
+              </div>
+              <div class="chart-body">
+                <canvas id="chartOrderStatus"></canvas>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB 4: PRODUCTS (CATÁLOGO MILITAR) -->
         <section id="tab-products" class="tab-view">
           <div class="section-header">
             <div>
               <h2>Catálogo de Suministros & Textiles Militares</h2>
-              <p>Gestiona los artículos de intendencia, precios, tallas y fotos reales.</p>
+              <p>Gestiona los artículos de intendencia, precios, tallas, fotos y stock en tiempo real.</p>
             </div>
             <button class="btn btn-primary" onclick="openProductModal()">
               <i class="bi bi-plus-circle"></i> Agregar Producto
@@ -196,7 +328,7 @@
           </div>
         </section>
 
-        <!-- TAB 3: VINCULAR WHATSAPP (Baileys QR & Número) -->
+        <!-- TAB 5: VINCULAR WHATSAPP (Baileys QR) -->
         <section id="tab-connection" class="tab-view">
           <div class="connection-layout" style="max-width: 650px; margin: 0 auto;">
             <div class="card text-center" style="box-shadow: 0 4px 20px rgba(0,0,0,0.06); border-radius: 12px; overflow: hidden; background: #ffffff;">
@@ -213,7 +345,7 @@
                   <div style="font-size: 3rem; color: #16a34a; margin-bottom: 8px;">
                     <i class="bi bi-check-circle-fill"></i>
                   </div>
-                  <h4 style="color: #065f46; font-size: 1.3rem; margin-bottom: 6px; font-weight: 700;">¡Línea Militar Conectada con Éxito!</h4>
+                  <h4 style="color: #065f46; font-size: 1.3rem; margin-bottom: 6px; font-weight: 700;">¡Línea SIS-COMER Conectada con Éxito!</h4>
                   <p style="color: #047857; margin-bottom: 16px; font-size: 0.95rem;">
                     El bot de comercialización está <strong>ACTIVO</strong> y respondiendo en tiempo real en la línea:
                     <br><strong id="conn-phone" style="font-size: 1.25rem; font-family: 'JetBrains Mono', monospace; color: #0f172a; display: inline-block; margin-top: 6px;"></strong>
@@ -225,10 +357,9 @@
 
                 <!-- Estado Esperando Escaneo QR -->
                 <div id="box-unconnected">
-                  <!-- Input para configurar número de WhatsApp -->
                   <div class="form-group" style="max-width: 460px; margin: 0 auto 20px auto; text-align: left;">
                     <label style="font-size: 0.85rem; font-weight: 600; color: #334155; margin-bottom: 6px; display: block;">
-                      Número Asignado a la Empresa (opcional para referencia en chat):
+                      Número Asignado a SIS-COMER (opcional para referencia):
                     </label>
                     <div style="display: flex; gap: 8px;">
                       <input type="text" id="input-wa-number" placeholder="+584121234567" style="flex: 1; padding: 10px 14px; border: 1px solid #cbd5e1; border-radius: 8px;">
@@ -248,21 +379,15 @@
 
                   <div class="instructions-steps" style="text-align: left; max-width: 440px; margin: 18px auto; font-size: 0.88rem; color: #475569; background: #f1f5f9; padding: 14px 18px; border-radius: 8px;">
                     <strong style="color: #0f172a; display: block; margin-bottom: 6px;"><i class="bi bi-info-circle-fill" style="color: #0284c7;"></i> Pasos para vincular:</strong>
-                    <ol style="padding-left: 20px; line-height: 1.6; margin: 0;">
-                      <li>Abre <strong>WhatsApp</strong> en el teléfono con la línea de la tienda.</li>
-                      <li>Toca <strong>Ajustes / Menú</strong> > <strong>Dispositivos vinculados</strong>.</li>
-                      <li>Presiona <strong>Vincular un dispositivo</strong> y apunta la cámara al código QR.</li>
+                    <ol style="margin-left: 20px; line-height: 1.5;">
+                      <li>Abra WhatsApp en el teléfono celular asignado.</li>
+                      <li>Toque los <strong>tres puntos</strong> o <strong>Configuración</strong> &gt; <strong>Dispositivos vinculados</strong>.</li>
+                      <li>Seleccione <strong>Vincular un dispositivo</strong> y apunte la cámara al código QR superior.</li>
                     </ol>
                   </div>
-
-                  <div style="display: flex; gap: 10px; justify-content: center; margin-top: 15px; flex-wrap: wrap;">
-                    <button class="btn btn-secondary" onclick="restartBaileysQR(false)" style="padding: 10px 18px; font-weight: 600;">
-                      <i class="bi bi-arrow-clockwise"></i> Recargar / Nuevo Código QR
-                    </button>
-                    <button class="btn btn-outline-danger" onclick="restartBaileysQR(true)" style="padding: 10px 18px; font-weight: 600; border: 1px solid #ef4444; color: #dc2626; background: transparent; border-radius: 8px; cursor: pointer;">
-                      <i class="bi bi-trash"></i> Limpiar Sesión y Reiniciar
-                    </button>
-                  </div>
+                  <button class="btn btn-secondary" onclick="restartBaileys(false)">
+                    <i class="bi bi-arrow-clockwise"></i> Forzar Nuevo Código QR
+                  </button>
                 </div>
 
               </div>
@@ -270,64 +395,55 @@
           </div>
         </section>
 
-        <!-- TAB 4: SETTINGS & HORARIOS -->
+        <!-- TAB 6: SETTINGS (HORARIOS & MENSAJES) -->
         <section id="tab-settings" class="tab-view">
-          <div class="card">
-            <div class="card-header">
-              <h3><i class="bi bi-sliders"></i> Horarios, Mantenimiento y Parámetros</h3>
+          <div class="settings-grid">
+            <div class="card">
+              <div class="card-header">
+                <h3><i class="bi bi-clock-history"></i> Horario de Atención Presencial</h3>
+              </div>
+              <div class="card-body">
+                <form id="form-settings-hours" onsubmit="saveConfig(event)">
+                  <div class="form-row">
+                    <div class="form-group">
+                      <label>Hora Inicio Laboral</label>
+                      <input type="time" id="cfg-hour-start" value="08:00">
+                    </div>
+                    <div class="form-group">
+                      <label>Hora Cierre Laboral</label>
+                      <input type="time" id="cfg-hour-end" value="17:00">
+                    </div>
+                  </div>
+                  <div class="form-group">
+                    <label>Mensaje Fuera de Horario Laboral</label>
+                    <textarea id="cfg-offhours-msg" rows="3">🌙 Nos encontramos fuera del horario laboral (8:00 AM a 5:00 PM). Puede realizar su pedido y comprobante ahora mismo y será procesado a primera hora.</textarea>
+                  </div>
+                  <button type="submit" class="btn btn-primary">Guardar Horario</button>
+                </form>
+              </div>
             </div>
-            <div class="card-body">
-              <form id="settings-form" onsubmit="saveSettings(event)">
-                
-                <div class="form-row">
-                  <div class="form-group">
-                    <label>Hora Inicio Laboral (24H):</label>
-                    <input type="time" id="set_business_start" value="08:00" required>
-                  </div>
-                  <div class="form-group">
-                    <label>Hora Fin Laboral (24H):</label>
-                    <input type="time" id="set_business_end" value="17:00" required>
-                  </div>
-                </div>
 
-                <div class="form-group">
-                  <label>Mensaje Fuera de Horario (Enviado al escribir después de las 5:00 PM o antes de las 8:00 AM):</label>
-                  <textarea id="set_off_hours_msg" rows="3" required></textarea>
-                </div>
-
-                <div class="form-group">
-                  <label>Mensaje de Modo Mantenimiento:</label>
-                  <textarea id="set_maintenance_msg" rows="3" required></textarea>
-                </div>
-
-                <div class="form-row">
+            <div class="card">
+              <div class="card-header">
+                <h3><i class="bi bi-shield-lock"></i> Parámetros de Sede & Asesor</h3>
+              </div>
+              <div class="card-body">
+                <form id="form-settings-contact" onsubmit="saveConfig(event)">
                   <div class="form-group">
-                    <label>Nombre del Asesor Comercial:</label>
-                    <input type="text" id="set_advisor_name" required>
+                    <label>Dirección de la Sede de Retiro</label>
+                    <input type="text" id="cfg-pickup-address" value="SEDE DE INTENDENCIA - COMPLEJO INDUSTRIAL TIUNA">
                   </div>
                   <div class="form-group">
-                    <label>WhatsApp del Asesor (Ej: +584121234567):</label>
-                    <input type="text" id="set_advisor_phone" required>
-                  </div>
-                </div>
-
-                <div class="form-row">
-                  <div class="form-group">
-                    <label>Dirección de la Sede para Retiro:</label>
-                    <input type="text" id="set_pickup_address" required>
+                    <label>Nombre del Asesor Comercial</label>
+                    <input type="text" id="cfg-advisor-name" value="ASESOR COMERCIAL SIS-COMER">
                   </div>
                   <div class="form-group">
-                    <label>Horario Visible al Público:</label>
-                    <input type="text" id="set_pickup_hours" required>
+                    <label>Teléfono Directo de Respaldo</label>
+                    <input type="text" id="cfg-advisor-phone" value="+584121234567">
                   </div>
-                </div>
-
-                <div class="form-actions">
-                  <button type="submit" class="btn btn-primary">
-                    <i class="bi bi-floppy"></i> Guardar Configuraciones
-                  </button>
-                </div>
-              </form>
+                  <button type="submit" class="btn btn-primary">Guardar Parámetros</button>
+                </form>
+              </div>
             </div>
           </div>
         </section>
@@ -336,97 +452,27 @@
     </main>
   </div>
 
-  <!-- MODAL 1: DETALLE COMPLETO DEL PEDIDO -->
+  <!-- MODAL: DETALLES DE PEDIDO & COMPROBANTE OCR -->
   <div class="modal" id="order-detail-modal">
-    <div class="modal-dialog" style="max-width: 620px;">
+    <div class="modal-dialog" style="max-width: 650px;">
       <div class="modal-header">
-        <div>
-          <h3 id="modal-ticket-title">Ticket: CIT-261005-001</h3>
-          <small id="modal-order-timestamp" class="text-muted">Registrado el 2026-10-05</small>
-        </div>
-        <button class="modal-close" onclick="closeOrderDetailModal()">&times;</button>
+        <h3 id="order-modal-title">Detalles de Solicitud Militar</h3>
+        <button class="modal-close" onclick="closeOrderModal()">&times;</button>
       </div>
-      
-      <div class="modal-body" style="padding: 18px 20px;">
-        <div class="order-client-card">
-          <div class="client-row">
-            <div>
-              <span class="text-muted text-xs">CLIENTE:</span>
-              <h4 id="det-client-name" style="color: var(--military-light); font-size: 1.05rem;">CAP. MANUEL SILVA</h4>
-            </div>
-            <div>
-              <span class="text-muted text-xs">CÉDULA:</span>
-              <p id="det-cedula" style="font-weight: 700;">V-18920114</p>
-            </div>
-            <div>
-              <span class="text-muted text-xs">TELÉFONO:</span>
-              <p id="det-phone">+584128887766</p>
-            </div>
-          </div>
-        </div>
-
-        <h4 style="margin: 16px 0 8px 0; font-size: 0.85rem; text-transform: uppercase; color: #475569;">
-          <i class="bi bi-boxes"></i> Desglose de Artículos Solicitados:
-        </h4>
-        <div id="det-items-list" class="items-breakdown">
-          <!-- Dynamic items list with size -->
-        </div>
-
-        <div class="order-summary-box">
-          <div class="summary-line">
-            <span>Total Artículos:</span>
-            <strong id="det-total-items">4</strong>
-          </div>
-          <div class="summary-line">
-            <span>Método de Pago:</span>
-            <strong id="det-payment-method" style="color: #b45309;">EFECTIVO / DIVISAS (PAGO AL RETIRAR)</strong>
-          </div>
-          <div class="summary-line">
-            <span>Fecha y Hora de Retiro:</span>
-            <strong id="det-pickup-datetime"><i class="bi bi-calendar3"></i> 2026-10-12 &nbsp;|&nbsp; <i class="bi bi-clock"></i> 09:30 AM</strong>
-          </div>
-          <div class="summary-line total">
-            <span>Monto Total a Cancelar:</span>
-            <span id="det-total-amount" class="total-price">$80.00 Ref</span>
-          </div>
-        </div>
-
-        <div id="det-offhours-tag" style="margin-top: 12px; display: none;">
-          <span class="status-badge" style="background: #fef3c7; color: #b45309;">
-            <i class="bi bi-moon-stars"></i> Registrado Fuera de Horario Laboral / Mantenimiento
-          </span>
-        </div>
-      </div>
-
-      <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
-        <div style="display: flex; gap: 6px;">
-          <button class="btn btn-warning btn-sm" id="btn-send-reminder" onclick="sendOrderReminder()">
-            <i class="bi bi-whatsapp"></i> Recordatorio
-          </button>
-          <button class="btn btn-primary btn-sm" id="btn-retake-order" onclick="retakeCurrentOrder()" style="display: none;">
-            <i class="bi bi-arrow-repeat"></i> Retomar Atención
-          </button>
-        </div>
-        <div style="display: flex; gap: 6px;">
-          <button class="btn btn-secondary btn-sm" onclick="openEditOrderModal()">
-            <i class="bi bi-pencil-square"></i> Editar
-          </button>
-          <button class="btn btn-danger btn-sm" onclick="deleteCurrentOrder()">
-            <i class="bi bi-trash3"></i> Eliminar
-          </button>
-        </div>
+      <div class="modal-body" id="order-modal-content">
+        <!-- Rellenado dinámicamente -->
       </div>
     </div>
   </div>
 
-  <!-- MODAL 2: EDITAR PEDIDO -->
-  <div class="modal" id="order-edit-modal">
+  <!-- MODAL: EDITAR PEDIDO -->
+  <div class="modal" id="edit-order-modal">
     <div class="modal-dialog">
       <div class="modal-header">
-        <h3>Editar Datos del Pedido</h3>
+        <h3>Editar Solicitud</h3>
         <button class="modal-close" onclick="closeEditOrderModal()">&times;</button>
       </div>
-      <form id="edit-order-form" onsubmit="saveEditedOrder(event)">
+      <form id="edit-order-form" onsubmit="saveEditOrder(event)">
         <input type="hidden" id="edit_order_id">
         <div class="form-group">
           <label>Nombre y Apellido (MAYÚSCULAS) *</label>
@@ -448,22 +494,18 @@
         </div>
         <div class="form-row">
           <div class="form-group">
-            <label>Monto Total ($) *</label>
+            <label>Monto Total ($ Ref) *</label>
             <input type="number" step="0.01" id="edit_total_amount" required>
           </div>
           <div class="form-group">
             <label>Método de Pago</label>
-            <select id="edit_payment_method">
-              <option value="EFECTIVO / DIVISAS (PAGO AL RETIRAR)">EFECTIVO / DIVISAS (PAGO AL RETIRAR)</option>
-              <option value="TRANSFERENCIA BANCARIA">TRANSFERENCIA BANCARIA</option>
-              <option value="PAGO MÓVIL">PAGO MÓVIL</option>
-            </select>
+            <input type="text" id="edit_payment_method">
           </div>
         </div>
         <div class="form-row">
           <div class="form-group">
             <label>Fecha de Retiro *</label>
-            <input type="date" id="edit_pickup_date" required>
+            <input type="text" id="edit_pickup_date" required>
           </div>
           <div class="form-group">
             <label>Hora de Retiro *</label>
@@ -489,7 +531,41 @@
     </div>
   </div>
 
-  <!-- MODAL 3: CREAR/EDITAR PRODUCTO MILITAR (Con Talla y Subida de Imagen) -->
+  <!-- MODAL: AGREGAR LOTE DE CONFECCIÓN (KARDEX) -->
+  <div class="modal" id="batch-stock-modal">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3><i class="bi bi-box-arrow-in-down"></i> Ingreso de Lote Terminado de Taller</h3>
+        <button class="modal-close" onclick="closeBatchStockModal()">&times;</button>
+      </div>
+      <form id="batch-stock-form" onsubmit="submitBatchStock(event)">
+        <div class="form-group">
+          <label>Producto a Abastecer *</label>
+          <select id="batch_product_id" required>
+            <option value="">Seleccione un producto...</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Cantidad Producida / Terminada (Unidades) *</label>
+          <input type="number" id="batch_quantity" min="1" required placeholder="Ej: 50">
+        </div>
+        <div class="form-group">
+          <label>Responsable de Taller / Confección</label>
+          <input type="text" id="batch_created_by" value="TALLER_CONFECCION_TIUNA">
+        </div>
+        <div class="form-group">
+          <label>Observaciones de Producción</label>
+          <textarea id="batch_notes" rows="2" placeholder="Lote finalizado corte y costura..."></textarea>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeBatchStockModal()">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Ingresar al Inventario</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: CREAR/EDITAR PRODUCTO MILITAR -->
   <div class="modal" id="product-modal">
     <div class="modal-dialog">
       <div class="modal-header">
@@ -538,10 +614,6 @@
         <div class="form-group">
           <label>Descripción Técnica Reglamentaria</label>
           <textarea id="prod_desc" rows="3" placeholder="Especificaciones, material, acabados reglamentarios..."></textarea>
-        </div>
-        <div class="form-group">
-          <label>Palabras Clave de Búsqueda</label>
-          <input type="text" id="prod_keywords" placeholder="uniforme, patriota, militar">
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" onclick="closeProductModal()">Cancelar</button>

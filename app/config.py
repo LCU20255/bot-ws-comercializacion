@@ -10,7 +10,8 @@ DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 
 # Database
-DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DATA_DIR / 'commercial_bot.db'}")
+DATABASE_PATH = DATA_DIR / "commercial_bot.db"
+DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DATABASE_PATH}")
 
 # Supabase (Optional)
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")

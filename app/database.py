@@ -39,12 +39,13 @@ def init_db():
     );
     """)
 
-    # Migración segura para la columna requires_size en bases de datos existentes
-    try:
-        cursor.execute("ALTER TABLE products ADD COLUMN requires_size INTEGER DEFAULT 0")
-        conn.commit()
-    except Exception:
-        pass
+    # Migraciones seguras para products
+    for col, col_type in [("requires_size", "INTEGER DEFAULT 0"), ("min_stock_alert", "INTEGER DEFAULT 20")]:
+        try:
+            cursor.execute(f"ALTER TABLE products ADD COLUMN {col} {col_type}")
+            conn.commit()
+        except Exception:
+            pass
 
     # 2. Tabla: clients (Clientes parametrizados en MAYÚSCULAS)
     cursor.execute("""
@@ -69,7 +70,15 @@ def init_db():
         items_detail TEXT NOT NULL,        -- JSON con lista detallada [{name, qty, unit_price, subtotal}]
         total_items INTEGER NOT NULL DEFAULT 1,
         total_amount REAL NOT NULL DEFAULT 0.0,
+        amount_usd REAL NOT NULL DEFAULT 0.0,
+        amount_ves REAL NOT NULL DEFAULT 0.0,
+        bcv_rate_applied REAL NOT NULL DEFAULT 0.0,
+        bcv_rate_date TEXT,
         payment_method TEXT NOT NULL,      -- EFECTIVO / DIVISAS, TRANSFERENCIA, PAGO MÓVIL
+        receipt_ref TEXT,
+        receipt_bank TEXT,
+        receipt_date TEXT,
+        ocr_raw_text TEXT,
         pickup_date TEXT NOT NULL,         -- YYYY-MM-DD
         pickup_time TEXT NOT NULL,         -- 09:00 AM
         status TEXT DEFAULT 'PENDIENTE POR ATENCIÓN',   -- PENDIENTE POR ATENCIÓN, CONFIRMADA, POR RETIRAR, RETIRADA, CANCELADA
@@ -81,7 +90,52 @@ def init_db():
     );
     """)
 
-    # 4. Tabla: system_config (Mantenimiento, Horarios y Mensajes)
+    # Migraciones seguras para orders existentes
+    order_cols = [
+        ("amount_usd", "REAL DEFAULT 0.0"),
+        ("amount_ves", "REAL DEFAULT 0.0"),
+        ("bcv_rate_applied", "REAL DEFAULT 0.0"),
+        ("bcv_rate_date", "TEXT"),
+        ("receipt_ref", "TEXT"),
+        ("receipt_bank", "TEXT"),
+        ("receipt_date", "TEXT"),
+        ("ocr_raw_text", "TEXT")
+    ]
+    for col_name, col_type in order_cols:
+        try:
+            cursor.execute(f"ALTER TABLE orders ADD COLUMN {col_name} {col_type}")
+            conn.commit()
+        except Exception:
+            pass
+
+    # 4. Tabla: inventory_movements (Kardex Histórico Militar)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS inventory_movements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER NOT NULL,
+        movement_type TEXT NOT NULL,       -- ENTRADA_TALLER, SALIDA_VENTA, AJUSTE
+        quantity INTEGER NOT NULL,
+        previous_stock INTEGER NOT NULL,
+        new_stock INTEGER NOT NULL,
+        order_id INTEGER,
+        client_name TEXT,
+        created_by TEXT DEFAULT 'SISTEMA',
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(product_id) REFERENCES products(id)
+    );
+    """)
+
+    # 5. Tabla: bcv_rates (Histórico Oficial de Tasas BCV por Fecha)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS bcv_rates (
+        rate_date TEXT PRIMARY KEY,
+        rate REAL NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    """)
+
+    # 6. Tabla: system_config (Mantenimiento, Horarios y Mensajes)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS system_config (
         key TEXT PRIMARY KEY,
@@ -311,9 +365,12 @@ def create_order(data: Dict[str, Any]) -> Dict[str, Any]:
     # Formato de Ticket exacto pedido por el usuario: CIT-YYMMDD-XXX
     now = datetime.now()
     date_code = now.strftime('%y%m%d')
-    cursor.execute("SELECT COUNT(*) FROM orders WHERE ticket_code LIKE ?", (f"CIT-{date_code}-%",))
-    count = cursor.fetchone()[0] + 1
-    ticket_code = f"CIT-{date_code}-{count:03d}"
+    cursor.execute("SELECT ticket_code FROM orders WHERE ticket_code LIKE ?", (f"CIT-{date_code}-%",))
+    existing_codes = {r[0] for r in cursor.fetchall()}
+    idx = len(existing_codes) + 1
+    while f"CIT-{date_code}-{idx:03d}" in existing_codes:
+        idx += 1
+    ticket_code = f"CIT-{date_code}-{idx:03d}"
 
     # Parametrizar en mayúsculas
     client_name = str(data["client_name"]).strip().upper()
@@ -329,25 +386,32 @@ def create_order(data: Dict[str, Any]) -> Dict[str, Any]:
         items_detail_json = str(items_detail)
 
     items_summary = str(data.get("items_summary", "")).strip().upper()
+    total_amount = float(data.get("total_amount", 0.0))
+    amount_usd = float(data.get("amount_usd", total_amount))
+    amount_ves = float(data.get("amount_ves", 0.0))
+    bcv_rate_applied = float(data.get("bcv_rate_applied", 0.0))
+    bcv_rate_date = str(data.get("bcv_rate_date", now.strftime('%Y-%m-%d')))
+    receipt_ref = data.get("receipt_ref")
+    receipt_bank = data.get("receipt_bank")
+    receipt_date = data.get("receipt_date")
+    ocr_raw_text = data.get("ocr_raw_text")
 
     cursor.execute("""
         INSERT INTO orders (
             ticket_code, client_name, cedula, phone,
             items_summary, items_detail, total_items, total_amount,
-            payment_method, pickup_date, pickup_time, status,
-            is_off_hours, notes
+            amount_usd, amount_ves, bcv_rate_applied, bcv_rate_date,
+            payment_method, receipt_ref, receipt_bank, receipt_date, ocr_raw_text,
+            pickup_date, pickup_time, status, is_off_hours, notes
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
-        ticket_code,
-        client_name,
-        cedula,
-        phone,
-        items_summary,
-        items_detail_json,
+        ticket_code, client_name, cedula, phone,
+        items_summary, items_detail_json,
         int(data.get("total_items", 1)),
-        float(data.get("total_amount", 0.0)),
-        payment_method,
+        total_amount,
+        amount_usd, amount_ves, bcv_rate_applied, bcv_rate_date,
+        payment_method, receipt_ref, receipt_bank, receipt_date, ocr_raw_text,
         data.get("pickup_date", now.strftime('%Y-%m-%d')),
         data.get("pickup_time", "09:00 AM"),
         status,
@@ -356,6 +420,34 @@ def create_order(data: Dict[str, Any]) -> Dict[str, Any]:
     ))
     conn.commit()
     order_id = cursor.lastrowid
+
+    # Descontar stock automáticamente y registrar en Kardex si hay productos
+    if isinstance(items_detail, list):
+        for it in items_detail:
+            prod_id = it.get("id") or it.get("product_id")
+            qty = int(it.get("qty", 1))
+            if prod_id:
+                try:
+                    cursor.execute("SELECT stock, name FROM products WHERE id = ?", (prod_id,))
+                    prow = cursor.fetchone()
+                    if prow:
+                        prev_stock = prow["stock"]
+                        new_stock = max(0, prev_stock - qty)
+                        cursor.execute("UPDATE products SET stock = ? WHERE id = ?", (new_stock, prod_id))
+                        cursor.execute("""
+                            INSERT INTO inventory_movements (
+                                product_id, movement_type, quantity, previous_stock,
+                                new_stock, order_id, client_name, created_by, notes
+                            )
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            prod_id, "SALIDA_VENTA", -qty, prev_stock,
+                            new_stock, order_id, client_name, "BOT_VENTAS",
+                            f"Venta con ticket {ticket_code}"
+                        ))
+                        conn.commit()
+                except Exception as e:
+                    logger.error(f"Error descontando inventario para producto {prod_id}: {e}")
 
     # Actualizar o guardar cliente
     upsert_client(client_name, cedula, phone)
@@ -496,3 +588,138 @@ def export_orders_df() -> pd.DataFrame:
         "HORA RETIRO", "ESTADO", "FUERA DE HORARIO", "RECORDATORIO ENVIADO", "FECHA REGISTRO", "OBSERVACIONES"
     ]
     return df
+
+# ----------------- INVENTORY & KARDEX ADVANCED -----------------
+def get_available_catalog_products() -> List[Dict[str, Any]]:
+    """Devuelve únicamente productos activos con stock > 0 para el catálogo de WhatsApp"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT * FROM products 
+        WHERE is_active = 1 AND stock > 0 
+        ORDER BY category ASC, name ASC
+    """)
+    rows = [dict(r) for r in cursor.fetchall()]
+    conn.close()
+    return rows
+
+def get_low_stock_products(threshold: int = 20) -> List[Dict[str, Any]]:
+    """Productos con stock crítico (<= threshold) que requieren confección en taller"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT * FROM products 
+        WHERE is_active = 1 AND stock <= COALESCE(min_stock_alert, ?)
+        ORDER BY stock ASC
+    """, (threshold,))
+    rows = [dict(r) for r in cursor.fetchall()]
+    conn.close()
+    return rows
+
+def add_stock_batch(product_id: int, quantity: int, notes: str = "", created_by: str = "TALLER_CONFECCION") -> Dict[str, Any]:
+    """Ingreso de lote terminado de confección al inventario con registro en Kardex"""
+    if quantity <= 0:
+        raise ValueError("La cantidad debe ser mayor a 0")
+        
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT stock, name FROM products WHERE id = ?", (product_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        raise ValueError(f"Producto {product_id} no encontrado")
+        
+    prev_stock = row["stock"]
+    new_stock = prev_stock + quantity
+    cursor.execute("UPDATE products SET stock = ?, updated_at = CURRENT_TIMESTAMP, updated_by = ? WHERE id = ?", (new_stock, created_by, product_id))
+    
+    cursor.execute("""
+        INSERT INTO inventory_movements (
+            product_id, movement_type, quantity, previous_stock, new_stock, created_by, notes
+        ) VALUES (?, 'ENTRADA_TALLER', ?, ?, ?, ?, ?)
+    """, (product_id, quantity, prev_stock, new_stock, created_by, notes or "Ingreso de lote terminado desde taller"))
+    conn.commit()
+    conn.close()
+    return {"product_id": product_id, "name": row["name"], "previous_stock": prev_stock, "new_stock": new_stock}
+
+def get_inventory_movements(limit: int = 100) -> List[Dict[str, Any]]:
+    """Historial de movimientos Kardex con datos del producto"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT m.*, p.name as product_name, p.slug as product_slug
+        FROM inventory_movements m
+        LEFT JOIN products p ON m.product_id = p.id
+        ORDER BY m.id DESC
+        LIMIT ?
+    """, (limit,))
+    rows = [dict(r) for r in cursor.fetchall()]
+    conn.close()
+    return rows
+
+def get_financial_and_sales_metrics() -> Dict[str, Any]:
+    """Métricas financieras exactas ($ y Bs) y análisis de ventas"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # Total ventas $ y Bs
+    cursor.execute("""
+        SELECT 
+            COUNT(*) as total_orders,
+            COALESCE(SUM(amount_usd), 0.0) as total_usd,
+            COALESCE(SUM(amount_ves), 0.0) as total_ves
+        FROM orders 
+        WHERE status != 'CANCELADA'
+    """)
+    totals = dict(cursor.fetchone())
+    
+    # Ventas de hoy
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    cursor.execute("""
+        SELECT 
+            COUNT(*) as today_orders,
+            COALESCE(SUM(amount_usd), 0.0) as today_usd,
+            COALESCE(SUM(amount_ves), 0.0) as today_ves
+        FROM orders 
+        WHERE status != 'CANCELADA' AND date(created_at) = ?
+    """, (today_str,))
+    today_totals = dict(cursor.fetchone())
+    
+    # Conteo stock bajo
+    cursor.execute("SELECT COUNT(*) as count FROM products WHERE is_active = 1 AND stock <= 20")
+    low_stock_count = cursor.fetchone()["count"]
+    
+    # Top 5 productos vendidos
+    cursor.execute("""
+        SELECT p.name, ABS(SUM(m.quantity)) as units_sold
+        FROM inventory_movements m
+        JOIN products p ON m.product_id = p.id
+        WHERE m.movement_type = 'SALIDA_VENTA'
+        GROUP BY p.id
+        ORDER BY units_sold DESC
+        LIMIT 5
+    """)
+    top_products = [dict(r) for r in cursor.fetchall()]
+    
+    # Desglose de estados
+    cursor.execute("SELECT status, COUNT(*) as count FROM orders GROUP BY status")
+    status_breakdown = {r["status"]: r["count"] for r in cursor.fetchall()}
+    
+    conn.close()
+    return {
+        "total_orders": totals["total_orders"],
+        "total_usd": round(totals["total_usd"], 2),
+        "total_ves": round(totals["total_ves"], 2),
+        "today_orders": today_totals["today_orders"],
+        "today_usd": round(today_totals["today_usd"], 2),
+        "today_ves": round(today_totals["today_ves"], 2),
+        "low_stock_count": low_stock_count,
+        "top_products": top_products,
+        "status_breakdown": status_breakdown
+    }
+
+# Compatibilidad hacia atrás
+get_appointments = get_orders
+export_appointments_df = export_orders_df
+
+

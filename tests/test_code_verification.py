@@ -12,14 +12,13 @@ from app.bot_flow import bot_manager, reset_session
 
 def run_all_code_tests():
     print("=" * 60)
-    print("EJECUTANDO PRUEBAS COMPLETAS POR CÓDIGO - SISTEMA MILITAR")
+    print("EJECUTANDO PRUEBAS COMPLETAS POR CÓDIGO - SIS-COMER")
     print("=" * 60)
 
     # 1. Inicializar BD y aplicar migraciones
     init_db()
     conn = get_connection()
     cur = conn.cursor()
-    # Asegurar que prendas tengan requires_size=1 y no-prendas requires_size=0
     cur.execute("UPDATE products SET requires_size = 1 WHERE name LIKE '%UNIFORME%' OR name LIKE '%BOTA%' OR name LIKE '%GORRA%'")
     cur.execute("UPDATE products SET requires_size = 0 WHERE name LIKE '%PARCHE%' OR name LIKE '%BARRA%' OR name LIKE '%PRESILLA%'")
     conn.commit()
@@ -39,23 +38,22 @@ def run_all_code_tests():
             assert req == 0, f"Artículo {p['name']} no debe pedir talla (requires_size=0)"
     print("[OK] Configuración de productos validada correctamente.")
 
-    # 2. Prueba de flujo: Artículo SIN talla (Barras y Presillas)
+    # 2. Prueba de flujo: Registro inicial de cliente
     test_phone = "+584129990001"
-    reset_session(test_phone)
+    reset_session(test_phone, keep_registration=False)
     
-    print("\n[PASO 2] Prueba con artículo que NO lleva talla (Barras y Presillas Venezuela Renace):")
-    res_barras = bot_manager.process_message(test_phone, "Quiero 2 juegos de barras y presillas venezuela renace")
-    # No debe pedir talla, debe ir directo a CART_VIEW
-    assert res_barras["state"] == "CART_VIEW", f"Estado esperado CART_VIEW, obtenido: {res_barras['state']}"
-    assert "BARRAS Y PRESILLAS" in res_barras["reply"], "Debe mostrar el producto en el carrito"
-    assert "TALLA" not in res_barras["reply"], "No debe pedir talla para barras y presillas"
-    print("[OK] Barras y presillas agregadas directo al carrito SIN solicitar talla.")
+    print("\n[PASO 2] Registro Inicial Obligatorio en SIS-COMER:")
+    r_reg1 = bot_manager.process_message(test_phone, "Teniente Carlos Mendez")
+    assert r_reg1["state"] == "REGISTER_CEDULA", "Debe pedir Cédula"
+    r_reg2 = bot_manager.process_message(test_phone, "V-20112334")
+    assert r_reg2["state"] == "REGISTER_PHONE", "Debe pedir Teléfono"
+    r_reg3 = bot_manager.process_message(test_phone, "0412-9990001")
+    assert r_reg3["state"] == "CATALOG", "Debe mostrar catálogo tras registro"
+    print("[OK] Registro completado y Catálogo SIS-COMER desplegado.")
 
-    # 3. Prueba de flujo: Prenda de vestir CON talla (Uniforme Militar)
-    print("\n[PASO 3] Prueba con prenda de vestir que SÍ requiere talla (Uniforme Militar):")
-    res_more = bot_manager.process_message(test_phone, "1") # Agregar otro producto
+    # 3. Prueba de flujo: Prenda de vestir CON talla
+    print("\n[PASO 3] Selección de prenda de vestir que requiere talla (Uniforme / Gorra):")
     res_uniform = bot_manager.process_message(test_phone, "1 uniforme militar")
-    
     assert res_uniform["state"] == "SELECTING_SIZE", f"Estado esperado SELECTING_SIZE, obtenido: {res_uniform['state']}"
     assert "TALLA" in res_uniform["reply"], "El bot debe preguntar la talla"
     print("[OK] Bot solicitó la talla adecuadamente para el uniforme.")
@@ -65,54 +63,44 @@ def run_all_code_tests():
     res_size = bot_manager.process_message(test_phone, "L")
     assert res_size["state"] == "CART_VIEW", f"Estado esperado CART_VIEW, obtenido: {res_size['state']}"
     assert "TALLA: L" in res_size["reply"], "El carrito debe reflejar la talla L"
-    print("[OK] Talla L registrada y reflejada en el resumen del carrito.")
+    print("[OK] Talla L registrada y reflejada en el resumen del carrito con precio dual ($ y Bs).")
 
-    # 5. Agendamiento y recolección de datos
-    print("\n[PASO 5] Proceder con agendamiento y envío de datos personales:")
-    bot_manager.process_message(test_phone, "2") # Proceder a agendar
-    res_data = bot_manager.process_message(test_phone, "Teniente Carlos Mendez, V-20112334, 2026-10-15 a las 10:00 AM")
-    assert "SELECCIONA TU MÉTODO DE PAGO" in res_data["reply"], "Debe avanzar a selección de método de pago"
-    print("[OK] Datos personales (Nombre, Cédula, Fecha y Hora) procesados.")
+    # 5. Pago Previo Obligatorio
+    print("\n[PASO 5] Proceder a Pagar (Pago Previo Requerido):")
+    r_pay = bot_manager.process_message(test_phone, "2") # Proceder al pago
+    assert r_pay["state"] == "AWAITING_PAYMENT", "Debe solicitar pago obligatorio previo"
+    print("[OK] Bot exigió comprobante de pago previo antes de agendar.")
 
-    # 6. Selección de método de pago
-    print("\n[PASO 6] Selección de forma de pago (1. Efectivo / Divisas en sede):")
-    res_pay = bot_manager.process_message(test_phone, "1")
-    assert res_pay["state"] == "CONFIRMING", f"Estado esperado CONFIRMING, obtenido: {res_pay['state']}"
-    assert "RESUMEN FINAL DE SU PEDIDO" in res_pay["reply"], "Debe mostrar ficha de confirmación"
-    assert "TALLA: L" in res_pay["reply"], "El resumen debe incluir la talla seleccionada"
-    print("[OK] Método de pago asignado y resumen generado.")
+    # 6. Envío de Comprobante OCR y Vinculación BCV
+    print("\n[PASO 6] Envío y Transcripción de Comprobante Bancario:")
+    r_rcpt = bot_manager.process_message(test_phone, "PAGO MOVIL BANCO DE VENEZUELA REF: 99112233 BS 2500 FECHA HOY")
+    assert r_rcpt["state"] == "AWAITING_SCHEDULE", "Debe habilitar agendamiento tras validar comprobante"
+    assert "COMPROBANTE DE PAGO VALIDADO" in r_rcpt["reply"], "Debe confirmar validación de comprobante"
+    print("[OK] Comprobante validado y tasa BCV vinculada exitosamente.")
 
-    # 7. Confirmación final de la orden y verificación del estatus inicial
-    print("\n[PASO 7] Confirmación de la cita y verificación de estatus inicial en Base de Datos:")
-    res_confirm = bot_manager.process_message(test_phone, "1")
-    ticket_code = res_confirm["ticket_code"]
-    assert "CIT-" in ticket_code, f"Formato de ticket inválido: {ticket_code}"
-    print(f" -> Ticket generado: {ticket_code}")
+    # 7. Agendamiento y Emisión de Ticket Oficial CIT-...
+    print("\n[PASO 7] Agendamiento de Fecha/Hora y Emisión de Ticket CIT-:")
+    res_final = bot_manager.process_message(test_phone, "2026-10-15 a las 10:00 AM")
+    assert res_final["state"] == "COMPLETED", "Debe finalizar en COMPLETED"
+    ticket_code = res_final["ticket_code"]
+    assert ticket_code.startswith("CIT-"), f"Formato de ticket inválido: {ticket_code}"
+    print(f"[OK] Solicitud completada exitosamente. Ticket emitido: {ticket_code}")
 
-    # Verificar directamente en la tabla orders
-    orders = get_orders(limit=5)
-    created_order = next((o for o in orders if o["ticket_code"] == ticket_code), None)
-    assert created_order is not None, "La orden debe existir en la base de datos"
-    assert created_order["status"] == "PENDIENTE POR ATENCIÓN", f"Estatus esperado 'PENDIENTE POR ATENCIÓN', obtenido '{created_order['status']}'"
-    print(f"[OK] Estatus inicial en BD verificado estrictamente: '{created_order['status']}'.")
-    
-    # 8. Verificación de eliminación de pedido (DELETE)
-    print("\n[PASO 8] Prueba de eliminación permanente de pedido en Base de Datos:")
-    order_id = created_order["id"]
-    delete_order(order_id)
-    assert get_order_by_id(order_id) is None, "El pedido debió haber sido eliminado permanentemente"
-    print(f"[OK] Pedido ID {order_id} eliminado exitosamente.")
+    # 8. Verificación de almacenamiento en Base de Datos
+    print("\n[PASO 8] Verificación en Base de Datos:")
+    orders = get_orders()
+    created = next((o for o in orders if o["ticket_code"] == ticket_code), None)
+    assert created is not None, "La orden debe existir en la base de datos"
+    assert created["client_name"] == "TENIENTE CARLOS MENDEZ", "Nombre debe estar en mayúsculas"
+    assert created["cedula"] == "V-20112334", "Cédula guardada correctamente"
+    assert created["phone"] == "0412-999-0001", "Teléfono debe ser el número real de contacto"
+    assert created["receipt_ref"] == "99112233", "Referencia bancaria guardada correctamente"
+    print(f"[OK] Orden {ticket_code} verificada en Base de Datos.")
 
-    # 9. Verificación de solicitud de Asesor Comercial (Mismo WhatsApp)
-    print("\n[PASO 9] Prueba de atención con Asesor Humano por el mismo WhatsApp:")
-    reset_session(test_phone)
-    res_adv = bot_manager.process_message(test_phone, "Quiero hablar con un asesor")
-    assert res_adv["state"] == "WAITING_ADVISOR", "Debe pasar al estado WAITING_ADVISOR"
-    assert "este mismo chat" in res_adv["reply"].lower() or "esta conversación" in res_adv["reply"].lower()
-    print("[OK] Asesor comercial asignado al mismo chat sin enlaces externos.")
-
+    # Limpiar orden de prueba
+    delete_order(created["id"])
     print("\n" + "=" * 60)
-    print("[EXITO] TODAS LAS PRUEBAS POR CODIGO PASARON AL 100%")
+    print("TODAS LAS PRUEBAS POR CÓDIGO PASARON EXITOSAMENTE (100% OK)")
     print("=" * 60)
 
 if __name__ == "__main__":

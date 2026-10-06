@@ -100,6 +100,11 @@ async function connectToWhatsApp() {
         } catch (e) {}
       }
 
+      if (global.heartbeatTimer) {
+        clearInterval(global.heartbeatTimer);
+        global.heartbeatTimer = null;
+      }
+
       setTimeout(connectToWhatsApp, 3000);
     } else if (connection === "open") {
       console.log("\n==================================================");
@@ -121,6 +126,15 @@ async function connectToWhatsApp() {
         status: "CONNECTED",
         phone: userPhone
       });
+
+      // Heartbeat periódico a Python cada 6 segundos para mantener sincronizado el panel
+      if (global.heartbeatTimer) clearInterval(global.heartbeatTimer);
+      global.heartbeatTimer = setInterval(() => {
+        notifyPython({
+          status: "CONNECTED",
+          phone: userPhone
+        }, 1);
+      }, 6000);
     }
   });
 
@@ -139,26 +153,62 @@ async function connectToWhatsApp() {
       }
 
       const remoteJid = msg.key.remoteJid;
-      const phone = remoteJid.replace("@s.whatsapp.net", "");
+      let phone = remoteJid.replace("@s.whatsapp.net", "");
 
-      // Extraer texto del mensaje
+      // Si remoteJid es un @lid, intentar resolver el número real si WhatsApp lo incluye en metadatos
+      if (remoteJid.includes("@lid")) {
+        if (msg.key.remoteJidAlt && msg.key.remoteJidAlt.includes("@s.whatsapp.net")) {
+          phone = msg.key.remoteJidAlt.split("@")[0];
+        } else if (msg.key.participant && msg.key.participant.includes("@s.whatsapp.net")) {
+          phone = msg.key.participant.split("@")[0];
+        } else if (msg.participant && msg.participant.includes("@s.whatsapp.net")) {
+          phone = msg.participant.split("@")[0];
+        }
+      }
+
+      // Extraer texto del mensaje o imagen
       let text =
         msg.message?.conversation ||
         msg.message?.extendedTextMessage?.text ||
+        msg.message?.imageMessage?.caption ||
         msg.message?.buttonsResponseMessage?.selectedButtonId ||
         msg.message?.listResponseMessage?.singleSelectReply?.selectedRowId ||
         "";
 
-      text = text.trim();
-      if (!text) continue;
+      let imageBase64 = null;
+      if (msg.message?.imageMessage) {
+        try {
+          const { downloadMediaMessage } = require("@whiskeysockets/baileys");
+          const buffer = await downloadMediaMessage(
+            msg,
+            "buffer",
+            {},
+            {
+              logger: pino({ level: "silent" }),
+              reuploadRequest: sock.updateMediaMessage
+            }
+          );
+          if (buffer) {
+            imageBase64 = buffer.toString("base64");
+            console.log(`📸 [Comprobante Recibido] Imagen capturada para +${phone} (${buffer.length} bytes)`);
+          }
+        } catch (mediaErr) {
+          console.error("Error descargando comprobante de pago:", mediaErr.message);
+        }
+      }
 
-      console.log(`📩 [WhatsApp Inbound] De: +${phone} | Mensaje: "${text}"`);
+      text = text.trim();
+      if (!text && !imageBase64) continue;
+
+      console.log(`📩 [WhatsApp Inbound] De: +${phone} (JID: ${remoteJid}) | Mensaje: "${text}" | Tiene Imagen: ${!!imageBase64}`);
 
       try {
         // Enviar a nuestro motor de IA / NLU en Python
         const response = await axios.post(PYTHON_API_URL, {
-          phone: `+${phone}`,
-          message: text
+          phone: phone.startsWith("+") ? phone : `+${phone}`,
+          jid: remoteJid,
+          message: text,
+          image_base64: imageBase64
         });
 
         const { reply, image_url } = response.data;

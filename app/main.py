@@ -19,11 +19,16 @@ from app.database import (
     create_product, update_product, delete_product,
     get_orders, get_order_by_id, update_order, update_order_status, delete_order,
     mark_reminder_sent, export_orders_df,
-    get_all_config, update_config, is_maintenance_active
+    get_all_config, update_config, is_maintenance_active,
+    get_inventory_movements, add_stock_batch, get_low_stock_products,
+    get_available_catalog_products, get_financial_and_sales_metrics
 )
 from app.bot_flow import bot_manager, reset_session
+from app.bcv_service import bcv_service
 import qrcode
 import pandas as pd
+import base64
+import uuid
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -167,7 +172,15 @@ class StatusUpdateSchema(BaseModel):
 
 class SimulateChatSchema(BaseModel):
     phone: str = "+584120000001"
-    message: str
+    message: Optional[str] = ""
+    image_base64: Optional[str] = None
+    jid: Optional[str] = None
+
+class StockBatchSchema(BaseModel):
+    product_id: int
+    quantity: int
+    notes: Optional[str] = ""
+    created_by: Optional[str] = "TALLER_CONFECCION"
 
 class ConfigSchema(BaseModel):
     maintenance_mode: Optional[str] = None
@@ -371,16 +384,86 @@ def api_export_csv():
     headers = {'Content-Disposition': f'attachment; filename="{filename}"'}
     return StreamingResponse(io.BytesIO(output.getvalue().encode('utf-8-sig')), media_type='text/csv', headers=headers)
 
-# ----------------- REST API: SIMULADOR INTERACTIVO -----------------
+# ----------------- REST API: SIMULADOR & OCR COMPROBANTES -----------------
 @app.post("/api/chat/simulate")
 def api_simulate_chat(body: SimulateChatSchema):
-    res = bot_manager.process_message(body.phone, body.message)
+    # Si viene con imagen de comprobante adjunta
+    if body.image_base64:
+        temp_img_name = f"temp_rcpt_{uuid.uuid4().hex[:8]}.jpg"
+        temp_img_path = DATA_DIR / temp_img_name
+        try:
+            with open(temp_img_path, "wb") as f:
+                f.write(base64.b64decode(body.image_base64))
+            # process_receipt_image procesa el OCR y destruye inmediatamente el archivo temporal
+            res = bot_manager.process_receipt_image(body.phone, str(temp_img_path), caption=body.message or "")
+            return res
+        except Exception as e:
+            logger.error(f"Error decodificando comprobante de pago: {e}")
+            if temp_img_path.exists():
+                try:
+                    temp_img_path.unlink()
+                except Exception:
+                    pass
+            return {"reply": "⚠️ Ocurrió un error al procesar la imagen del comprobante. Por favor envíe el número de referencia y banco por texto.", "state": "AWAITING_PAYMENT"}
+
+    # Mensaje de texto normal
+    res = bot_manager.process_message(body.phone, body.message or "")
+    return res
+
+@app.post("/api/chat/process-receipt")
+async def api_process_receipt(
+    phone: str = Query(...),
+    caption: Optional[str] = Query(default=""),
+    file: UploadFile = File(...)
+):
+    """Sube una imagen de comprobante bancario vía multipart, extrae datos por OCR y purga el archivo del disco"""
+    temp_img_name = f"upload_rcpt_{uuid.uuid4().hex[:8]}.jpg"
+    temp_img_path = DATA_DIR / temp_img_name
+    with open(temp_img_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    
+    # Procesa y destruye el archivo de inmediato
+    res = bot_manager.process_receipt_image(phone, str(temp_img_path), caption=caption or "")
     return res
 
 @app.post("/api/chat/reset")
 def api_reset_chat(body: SimulateChatSchema):
-    reset_session(body.phone)
+    reset_session(body.phone, keep_registration=False)
     return {"status": "ok", "message": "Sesión reiniciada"}
+
+# ----------------- REST API: MÉTRICAS FINANCIERAS & BCV -----------------
+@app.get("/api/metrics/financial")
+def api_get_financial_metrics():
+    """Ventas totales y de hoy en $ y Bs, conteo de stock bajo, top productos y estados"""
+    return get_financial_and_sales_metrics()
+
+@app.get("/api/bcv/today")
+def api_get_bcv_today():
+    """Obtiene la tasa oficial BCV del día en curso"""
+    rate = bcv_service.get_rate_for_date()
+    return {"rate": rate, "currency": "VES/USD", "status": "ok"}
+
+# ----------------- REST API: INVENTARIO & KARDEX MILITAR -----------------
+@app.get("/api/inventory/movements")
+def api_get_inventory_movements(limit: int = 100):
+    return get_inventory_movements(limit=limit)
+
+@app.get("/api/inventory/low-stock")
+def api_get_low_stock():
+    return get_low_stock_products(threshold=20)
+
+@app.post("/api/inventory/batch-add")
+def api_add_stock_batch(body: StockBatchSchema):
+    try:
+        res = add_stock_batch(
+            product_id=body.product_id,
+            quantity=body.quantity,
+            notes=body.notes or "",
+            created_by=body.created_by or "TALLER_CONFECCION"
+        )
+        return {"status": "ok", "message": f"Se ingresaron {body.quantity} unidades al inventario", "data": res}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 # ----------------- REST API: BAILEYS QR & ESTADO -----------------
 class BaileysInternalStatus(BaseModel):
