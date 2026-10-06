@@ -95,7 +95,7 @@ function initTabs() {
 
       const titleMap = {
         orders: "Pedidos & Agendamientos de Retiro",
-        inventory: "Inventario & Kardex Militar",
+        inventory: "Control de Inventario & Kardex",
         metrics: "Análisis Comercial & Rendimiento de Ventas",
         products: "Catálogo de Suministros & Textiles Militares",
         connection: "Vincular WhatsApp con Baileys (QR)",
@@ -103,7 +103,7 @@ function initTabs() {
       };
       const subMap = {
         orders: "Control de solicitudes militares, pagos previos OCR y entrega presencial.",
-        inventory: "Auditoría de confección, entradas de taller y salidas por ventas en SIS-COMER.",
+        inventory: "Auditoría y control de movimientos de inventario en SIS-COMER.",
         metrics: "Facturación consolidada en Divisas ($) y Bolívares (Bs) a tasa BCV oficial.",
         products: "Gestiona los artículos de intendencia, precios, tallas, fotos y stock en tiempo real.",
         connection: "Escanea el código QR de Baileys para activar la atención automática.",
@@ -118,6 +118,7 @@ function initTabs() {
       if (target === "inventory") {
         loadInventoryKardex();
         loadLowStockAlerts();
+        loadWaitlist();
       } else if (target === "metrics") {
         loadFinancialMetrics();
       } else if (target === "connection") {
@@ -414,7 +415,7 @@ async function loadInventoryKardex() {
     }
     tbody.innerHTML = movements.map(m => {
       const isIn = m.movement_type === "ENTRADA_TALLER";
-      const badge = isIn ? '<span class="kardex-badge-in">ENTRADA TALLER</span>' : '<span class="kardex-badge-out">SALIDA VENTA</span>';
+      const badge = isIn ? '<span class="kardex-badge-in">ENTRADA INVENTARIO</span>' : '<span class="kardex-badge-out">SALIDA VENTA</span>';
       return `
         <tr>
           <td><code style="color: #64748b;">#${m.id}</code></td>
@@ -506,6 +507,7 @@ async function submitBatchStock(e) {
       loadProducts();
       loadInventoryKardex();
       loadLowStockAlerts();
+      loadWaitlist();
     } else {
       notifyError("Error", data.detail || "No se pudo ingresar el lote.");
     }
@@ -513,6 +515,60 @@ async function submitBatchStock(e) {
     notifyError("Error", "Error de red ingresando lote.");
   }
 }
+
+// ----------------- LISTA DE ESPERA (WAITLIST) -----------------
+async function loadWaitlist() {
+  const tbody = document.getElementById("waitlist-tbody");
+  if (!tbody) return;
+  try {
+    const res = await fetch("/api/waitlist");
+    const list = await res.json();
+    if (!list || list.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted" style="padding: 30px;">No hay clientes en lista de espera actualmente.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = list.map(item => {
+      const isPending = item.status === "PENDIENTE";
+      const statusBadge = isPending 
+        ? `<span class="badge" style="background: #fef3c7; color: #b45309; padding: 4px 10px; border-radius: 6px; font-weight: 700;">PENDIENTE</span>`
+        : `<span class="badge" style="background: #dcfce7; color: #15803d; padding: 4px 10px; border-radius: 6px; font-weight: 700;">NOTIFICADO</span>`;
+      
+      const actionBtn = isPending
+        ? `<button class="btn btn-sm btn-primary" onclick="notifyWaitlistEntry(${item.id})"><i class="bi bi-send-fill"></i> Notificar Ahora</button>`
+        : `<small class="text-muted"><i class="bi bi-check2-all" style="color: #16a34a;"></i> ${item.notified_at || 'Avisado'}</small>`;
+
+      return `
+        <tr>
+          <td><code style="color: #64748b;">#${item.id}</code></td>
+          <td><small>${item.created_at}</small></td>
+          <td><strong>${item.client_name || 'CLIENTE'}</strong></td>
+          <td><code>${item.phone}</code></td>
+          <td><span style="font-weight: 600; color: #0f172a;">${item.product_name}</span></td>
+          <td>${statusBadge}</td>
+          <td>${actionBtn}</td>
+        </tr>
+      `;
+    }).join("");
+  } catch (err) {
+    console.error("Error cargando lista de espera:", err);
+  }
+}
+
+async function notifyWaitlistEntry(id) {
+  try {
+    const res = await fetch(`/api/waitlist/${id}/notify`, { method: "POST" });
+    const data = await res.json();
+    if (res.ok) {
+      notifySuccess("Notificación Enviada", data.message);
+      loadWaitlist();
+    } else {
+      notifyError("Error", data.detail || "No se pudo enviar la notificación");
+    }
+  } catch (err) {
+    notifyError("Error", "Error de red al notificar al cliente");
+  }
+}
+
 
 // ----------------- MÉTRICAS & CHART.JS -----------------
 async function loadFinancialMetrics() {
@@ -726,7 +782,8 @@ function editProduct(id) {
   document.getElementById("prod_stock").value = p.stock;
   document.getElementById("prod_image").value = p.image_url || "";
   document.getElementById("prod_desc").value = p.description || "";
-  document.getElementById("prod_keywords").value = p.keywords || "";
+  const kwEl = document.getElementById("prod_keywords");
+  if (kwEl) kwEl.value = p.keywords || "";
 
   document.getElementById("product-modal").classList.add("show");
 }
@@ -734,6 +791,7 @@ function editProduct(id) {
 async function saveProduct(e) {
   e.preventDefault();
   const id = document.getElementById("prod_id").value;
+  const kwEl = document.getElementById("prod_keywords");
   const payload = {
     name: document.getElementById("prod_name").value.toUpperCase(),
     price: parseFloat(document.getElementById("prod_price").value),
@@ -743,7 +801,7 @@ async function saveProduct(e) {
     stock: parseInt(document.getElementById("prod_stock").value),
     image_url: document.getElementById("prod_image").value || "/static/images/placeholder.png",
     description: document.getElementById("prod_desc").value,
-    keywords: document.getElementById("prod_keywords").value,
+    keywords: kwEl ? kwEl.value : "",
     updated_by: "ADMIN"
   };
 
@@ -886,6 +944,9 @@ async function loadConfig() {
     const isMaint = cfg.maintenance_mode === "1";
     updateMaintUI(isMaint);
 
+    if (cfg.maintenance_message && document.getElementById("cfg-maint-msg")) {
+      document.getElementById("cfg-maint-msg").value = cfg.maintenance_message;
+    }
     if (cfg.business_hours_start) document.getElementById("cfg-hour-start").value = cfg.business_hours_start;
     if (cfg.business_hours_end) document.getElementById("cfg-hour-end").value = cfg.business_hours_end;
     if (cfg.off_hours_message) document.getElementById("cfg-offhours-msg").value = cfg.off_hours_message;
@@ -927,6 +988,7 @@ async function toggleMaintenance() {
 async function saveConfig(e) {
   e.preventDefault();
   const payload = {
+    maintenance_message: document.getElementById("cfg-maint-msg")?.value,
     business_hours_start: document.getElementById("cfg-hour-start")?.value,
     business_hours_end: document.getElementById("cfg-hour-end")?.value,
     off_hours_message: document.getElementById("cfg-offhours-msg")?.value,

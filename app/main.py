@@ -21,10 +21,12 @@ from app.database import (
     mark_reminder_sent, export_orders_df,
     get_all_config, update_config, is_maintenance_active,
     get_inventory_movements, add_stock_batch, get_low_stock_products,
-    get_available_catalog_products, get_financial_and_sales_metrics
+    get_available_catalog_products, get_financial_and_sales_metrics,
+    get_waitlist, mark_waitlist_notified
 )
 from app.bot_flow import bot_manager, reset_session
 from app.bcv_service import bcv_service
+from app.whatsapp_service import notify_waitlist_stock_available, wa_service
 import qrcode
 import pandas as pd
 import base64
@@ -128,6 +130,8 @@ def start_baileys_process():
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             bufsize=1
         )
         threading.Thread(target=read_baileys_output, args=(baileys_process,), daemon=True).start()
@@ -220,11 +224,15 @@ def api_get_products(active_only: bool = False):
 @app.post("/api/products")
 def api_create_product(prod: ProductSchema):
     pid = create_product(prod.dict(), updated_by=prod.updated_by or "ADMIN")
+    if prod.stock and prod.stock > 0:
+        notify_waitlist_stock_available(pid, prod.name)
     return {"status": "ok", "id": pid, "message": "Producto militar registrado con éxito"}
 
 @app.put("/api/products/{product_id}")
 def api_update_product(product_id: int, prod: ProductSchema):
     update_product(product_id, prod.dict(), updated_by=prod.updated_by or "ADMIN")
+    if prod.stock and prod.stock > 0:
+        notify_waitlist_stock_available(product_id, prod.name)
     return {"status": "ok", "message": "Producto militar actualizado con éxito"}
 
 @app.delete("/api/products/{product_id}")
@@ -283,9 +291,9 @@ def api_retake_order(order_id: int):
     
     message = (
         f"👋 *Saludos cordiales {client_name}:*\n\n"
-        "Le escribimos del *Área de Comercialización e Intendencia Militar*. "
+        "Le escribimos de *Complejo Industrial Tiuna — Equipo de Comercialización*. "
         "Nos comunicamos para retomar su consulta y atención tras haber finalizado nuestro periodo de mantenimiento.\n\n"
-        "¿En qué artículos militares o confección podemos asistirle el día de hoy?\n\n"
+        "¿En qué artículos o confección podemos asistirle el día de hoy?\n\n"
         "Escriba *0* para ver la lista de productos disponibles para entrega inmediata."
     )
     
@@ -308,7 +316,7 @@ async def api_send_reminder(order_id: int):
 
     message = (
         f"👋 *Estimado(a) {client_name}:*\n\n"
-        f"Le saludamos del *Área de Comercialización e Intendencia Militar*. "
+        f"Le saludamos de *Complejo Industrial Tiuna — Equipo de Comercialización*. "
         f"Nos comunicamos con respecto a su solicitud de *{items}* (Ticket: `{ticket}`).\n\n"
         f"Nos gustaría confirmar si aún se encuentra disponible para proceder con el retiro y despacho de su pedido en nuestra sede.\n\n"
         f"Quedamos atentos a su respuesta. ¡A su orden!"
@@ -459,11 +467,54 @@ def api_add_stock_batch(body: StockBatchSchema):
             product_id=body.product_id,
             quantity=body.quantity,
             notes=body.notes or "",
-            created_by=body.created_by or "TALLER_CONFECCION"
+            created_by=body.created_by or "ALMACEN_TIUNA"
         )
-        return {"status": "ok", "message": f"Se ingresaron {body.quantity} unidades al inventario", "data": res}
+        
+        # Notificar automáticamente a clientes en lista de espera si hay solicitudes pendientes
+        prod = get_product_by_id(body.product_id)
+        notified_count = 0
+        if prod:
+            notified_count = notify_waitlist_stock_available(body.product_id, prod["name"])
+            if notified_count > 0:
+                logger.info(f"Se notificaron automáticamente {notified_count} cliente(s) en espera de {prod['name']}")
+                
+        return {
+            "status": "ok", 
+            "message": f"Se ingresaron {body.quantity} unidades al inventario", 
+            "notified_waitlist": notified_count,
+            "data": res
+        }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+# ----------------- REST API: LISTA DE ESPERA (WAITLIST) -----------------
+@app.get("/api/waitlist")
+def api_get_waitlist(status: Optional[str] = None):
+    return get_waitlist(status=status)
+
+@app.post("/api/waitlist/{waitlist_id}/notify")
+def api_notify_single_waitlist(waitlist_id: int):
+    items = get_waitlist()
+    target = next((item for item in items if item["id"] == waitlist_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Solicitud de espera no encontrada")
+    
+    prod_name = target["product_name"]
+    prod_id = target.get("product_id")
+    count = notify_waitlist_stock_available(prod_id or 0, prod_name)
+    if count == 0 and target["status"] == "PENDIENTE":
+        # Forzar notificación individual directa
+        now_hour = datetime.now().hour
+        greeting = "Buenas tardes" if 12 <= now_hour < 19 else ("Buenos días" if now_hour < 12 else "Buenas noches")
+        msg = (
+            f"👋 ¡Hola, {target.get('client_name') or 'Cliente'}! {greeting}.\n\n"
+            "Nos estamos comunicando de *Complejo Industrial Tiuna — Equipo de Comercialización*.\n\n"
+            f"📦 Le informamos que el producto *{prod_name}* ya se encuentra *DISPONIBLE* en nuestro inventario.\n\n"
+            "Puede responder a este mensaje para coordinar su solicitud. ¡Estamos a su entera orden!"
+        )
+        wa_service.send_message_sync(target["phone"], msg)
+        mark_waitlist_notified(waitlist_id)
+    return {"status": "ok", "message": f"Notificación enviada al cliente {target['phone']}"}
 
 # ----------------- REST API: BAILEYS QR & ESTADO -----------------
 class BaileysInternalStatus(BaseModel):

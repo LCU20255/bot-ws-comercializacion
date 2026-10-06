@@ -21,31 +21,16 @@ class TestSisComerSystem(unittest.TestCase):
     def setUp(self):
         init_db()
 
-    def test_initial_registration_flow(self):
-        """Prueba que el flujo inicie obligatoriamente solicitando Nombre, Cédula y Teléfono"""
+    def test_direct_catalog_flow_without_registration(self):
+        """Prueba que el flujo inicie directamente en el catálogo sin registro previo obligatorio"""
         phone = "+584125556677"
-        reset_session(phone, keep_registration=False)
+        reset_session(phone)
 
-        # 1. Saludo inicial debe pedir nombre y apellido
+        # 1. Saludo inicial debe mostrar directamente el catálogo oficial SIS-COMER
         r1 = bot_manager.process_message(phone, "Hola")
-        self.assertIn("NOMBRE Y APELLIDO COMPLETO", r1["reply"])
-        self.assertEqual(r1["state"], "REGISTER_NAME")
-
-        # 2. Enviar nombre debe solicitar cédula
-        r2 = bot_manager.process_message(phone, "Teniente Jose Gregorio Hernandez")
-        self.assertIn("CÉDULA DE IDENTIDAD", r2["reply"])
-        self.assertEqual(r2["state"], "REGISTER_CEDULA")
-
-        # 3. Enviar cédula debe solicitar teléfono de contacto directo
-        r3 = bot_manager.process_message(phone, "V-17890123")
-        self.assertIn("TELÉFONO DE CONTACTO", r3["reply"])
-        self.assertEqual(r3["state"], "REGISTER_PHONE")
-
-        # 4. Enviar teléfono debe culminar registro y mostrar catálogo oficial SIS-COMER
-        r4 = bot_manager.process_message(phone, "0412-9876543")
-        self.assertIn("SIS-COMER", r4["reply"])
-        self.assertIn("PRODUCTOS DISPONIBLES", r4["reply"])
-        self.assertEqual(r4["state"], "CATALOG")
+        self.assertIn("SIS-COMER", r1["reply"])
+        self.assertIn("PRODUCTOS DISPONIBLES", r1["reply"])
+        self.assertEqual(r1["state"], "CATALOG")
 
     def test_catalog_excludes_zero_stock(self):
         """Garantiza que productos con stock = 0 no aparezcan en el catálogo de WhatsApp"""

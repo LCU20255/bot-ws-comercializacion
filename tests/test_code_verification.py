@@ -38,18 +38,15 @@ def run_all_code_tests():
             assert req == 0, f"Artículo {p['name']} no debe pedir talla (requires_size=0)"
     print("[OK] Configuración de productos validada correctamente.")
 
-    # 2. Prueba de flujo: Registro inicial de cliente
+    # 2. Prueba de flujo: Acceso directo al Catálogo sin registro
     test_phone = "+584129990001"
-    reset_session(test_phone, keep_registration=False)
+    reset_session(test_phone)
     
-    print("\n[PASO 2] Registro Inicial Obligatorio en SIS-COMER:")
-    r_reg1 = bot_manager.process_message(test_phone, "Teniente Carlos Mendez")
-    assert r_reg1["state"] == "REGISTER_CEDULA", "Debe pedir Cédula"
-    r_reg2 = bot_manager.process_message(test_phone, "V-20112334")
-    assert r_reg2["state"] == "REGISTER_PHONE", "Debe pedir Teléfono"
-    r_reg3 = bot_manager.process_message(test_phone, "0412-9990001")
-    assert r_reg3["state"] == "CATALOG", "Debe mostrar catálogo tras registro"
-    print("[OK] Registro completado y Catálogo SIS-COMER desplegado.")
+    print("\n[PASO 2] Acceso Directo a SIS-COMER (Sin Registro Previo):")
+    r_cat = bot_manager.process_message(test_phone, "Hola")
+    assert r_cat["state"] == "CATALOG", f"Debe mostrar catálogo directamente, obtenido: {r_cat['state']}"
+    assert "CATÁLOGO" in r_cat["reply"] or "SIS-COMER" in r_cat["reply"], "Debe mostrar el catálogo"
+    print("[OK] Acceso directo al Catálogo SIS-COMER sin barreras de registro.")
 
     # 3. Prueba de flujo: Prenda de vestir CON talla
     print("\n[PASO 3] Selección de prenda de vestir que requiere talla (Uniforme / Gorra):")
@@ -91,11 +88,8 @@ def run_all_code_tests():
     orders = get_orders()
     created = next((o for o in orders if o["ticket_code"] == ticket_code), None)
     assert created is not None, "La orden debe existir en la base de datos"
-    assert created["client_name"] == "TENIENTE CARLOS MENDEZ", "Nombre debe estar en mayúsculas"
-    assert created["cedula"] == "V-20112334", "Cédula guardada correctamente"
-    assert created["phone"] == "0412-999-0001", "Teléfono debe ser el número real de contacto"
     assert created["receipt_ref"] == "99112233", "Referencia bancaria guardada correctamente"
-    print(f"[OK] Orden {ticket_code} verificada en Base de Datos.")
+    print(f"[OK] Orden {ticket_code} verificada en Base de Datos con éxito.")
 
     # Limpiar orden de prueba
     delete_order(created["id"])

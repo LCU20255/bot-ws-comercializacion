@@ -143,6 +143,21 @@ def init_db():
     );
     """)
 
+    # 7. Tabla: product_waitlist (Lista de Espera cuando no hay stock)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS product_waitlist (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        phone TEXT NOT NULL,
+        client_name TEXT,
+        product_id INTEGER,
+        product_name TEXT NOT NULL,
+        status TEXT DEFAULT 'PENDIENTE', -- PENDIENTE, NOTIFICADO, CANCELADO
+        created_at TEXT NOT NULL,
+        notified_at TEXT,
+        FOREIGN KEY (product_id) REFERENCES products (id) ON DELETE SET NULL
+    );
+    """)
+
     conn.commit()
 
     # Sembrar productos militares iniciales si está vacía
@@ -228,19 +243,36 @@ def init_db():
 
     # Configuraciones de Sistema por defecto
     default_config = {
-        "bot_name": "SISTEMA DE COMERCIALIZACIÓN TEXTIL MILITAR",
+        "bot_name": "SIS-COMER - Equipo de Comercialización",
         "maintenance_mode": "0",  # 0 = Activo normal, 1 = Modo mantenimiento activado
-        "maintenance_message": "¡Hola! En este momento nos encontramos en proceso de auditoría interna / mantenimiento. Por favor comunícate con nosotros el día de mañana de 8:00 AM a 5:00 PM.",
+        "maintenance_message": "¡Hola! En este momento nos encontramos en proceso de mantenimiento. Por favor comunícate con nosotros el día de mañana de 8:00 AM a 5:00 PM.",
         "business_hours_start": "08:00",
         "business_hours_end": "17:00",
         "off_hours_message": "Hola. En este momento nos encontramos fuera de nuestro horario laboral (Lunes a Viernes de 8:00 AM a 5:00 PM). Sin embargo, tu solicitud quedará guardada en el sistema para ser atendida a primera hora hábil.",
         "advisor_phone": "+584121234567",
-        "advisor_name": "ASESOR COMERCIAL MILITAR",
-        "pickup_address": "SEDE PRINCIPAL DE COMERCIALIZACIÓN E INTENDENCIA MILITAR",
+        "advisor_name": "ASESOR COMERCIAL - COMPLEJO INDUSTRIAL TIUNA",
+        "pickup_address": "SEDE PRINCIPAL - COMPLEJO INDUSTRIAL TIUNA",
         "pickup_hours": "LUNES A VIERNES DE 8:00 AM A 5:00 PM"
     }
     for k, v in default_config.items():
         cursor.execute("INSERT OR IGNORE INTO system_config (key, value) VALUES (?, ?)", (k, v))
+        
+    # Sanitizar textos viejos que puedan haber quedado guardados
+    cursor.execute("""
+        UPDATE system_config 
+        SET value = 'SEDE PRINCIPAL - COMPLEJO INDUSTRIAL TIUNA' 
+        WHERE key = 'pickup_address' AND (value LIKE '%INTENDENCIA MILITAR%' OR value LIKE '%COMERCIALIZACIÓN E INTENDENCIA%')
+    """)
+    cursor.execute("""
+        UPDATE system_config 
+        SET value = 'ASESOR COMERCIAL - COMPLEJO INDUSTRIAL TIUNA' 
+        WHERE key = 'advisor_name' AND value LIKE '%MILITAR%'
+    """)
+    cursor.execute("""
+        UPDATE system_config 
+        SET value = 'SIS-COMER - Equipo de Comercialización' 
+        WHERE key = 'bot_name' AND value LIKE '%TEXTIL MILITAR%'
+    """)
     conn.commit()
 
     conn.close()
@@ -637,7 +669,7 @@ def add_stock_batch(product_id: int, quantity: int, notes: str = "", created_by:
         INSERT INTO inventory_movements (
             product_id, movement_type, quantity, previous_stock, new_stock, created_by, notes
         ) VALUES (?, 'ENTRADA_TALLER', ?, ?, ?, ?, ?)
-    """, (product_id, quantity, prev_stock, new_stock, created_by, notes or "Ingreso de lote terminado desde taller"))
+    """, (product_id, quantity, prev_stock, new_stock, created_by, notes or "Ingreso de lote al inventario"))
     conn.commit()
     conn.close()
     return {"product_id": product_id, "name": row["name"], "previous_stock": prev_stock, "new_stock": new_stock}
@@ -721,5 +753,64 @@ def get_financial_and_sales_metrics() -> Dict[str, Any]:
 # Compatibilidad hacia atrás
 get_appointments = get_orders
 export_appointments_df = export_orders_df
+
+# ----------------- PRODUCT WAITLIST (LISTA DE ESPERA POR STOCK) -----------------
+def add_to_waitlist(phone: str, client_name: str, product_name: str, product_id: Optional[int] = None) -> int:
+    """Registra a un cliente en lista de espera cuando un producto no tiene stock disponible"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute("""
+        INSERT INTO product_waitlist (phone, client_name, product_id, product_name, status, created_at)
+        VALUES (?, ?, ?, ?, 'PENDIENTE', ?)
+    """, (phone, client_name, product_id, product_name, now_str))
+    waitlist_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return waitlist_id
+
+def get_waitlist(status: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Obtiene la lista de clientes en espera por reposición de stock"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    if status:
+        cursor.execute("SELECT * FROM product_waitlist WHERE status = ? ORDER BY id DESC", (status,))
+    else:
+        cursor.execute("SELECT * FROM product_waitlist ORDER BY id DESC")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def get_pending_waitlist_for_product(product_id: Optional[int], product_name: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Busca clientes pendientes de aviso para un producto en específico"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    if product_id and product_name:
+        clean_name = f"%{product_name.strip().lower()}%"
+        cursor.execute("""
+            SELECT * FROM product_waitlist 
+            WHERE status = 'PENDIENTE' AND (product_id = ? OR LOWER(product_name) LIKE ?)
+        """, (product_id, clean_name))
+    elif product_id:
+        cursor.execute("SELECT * FROM product_waitlist WHERE status = 'PENDIENTE' AND product_id = ?", (product_id,))
+    elif product_name:
+        clean_name = f"%{product_name.strip().lower()}%"
+        cursor.execute("SELECT * FROM product_waitlist WHERE status = 'PENDIENTE' AND LOWER(product_name) LIKE ?", (clean_name,))
+    else:
+        conn.close()
+        return []
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def mark_waitlist_notified(waitlist_id: int):
+    """Marca un registro de lista de espera como ya notificado con fecha y hora"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute("UPDATE product_waitlist SET status = 'NOTIFICADO', notified_at = ? WHERE id = ?", (now_str, waitlist_id))
+    conn.commit()
+    conn.close()
+
 
 

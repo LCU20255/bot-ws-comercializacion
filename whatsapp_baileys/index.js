@@ -30,6 +30,8 @@ async function notifyPython(payload, retries = 10) {
   }
 }
 
+let globalSock = null;
+
 async function connectToWhatsApp() {
   console.log("==================================================");
   console.log("🚀 Iniciando cliente de WhatsApp con Baileys...");
@@ -46,6 +48,7 @@ async function connectToWhatsApp() {
     auth: state,
     browser: ["Comercializacion Bot", "Chrome", "1.0.0"]
   });
+  globalSock = sock;
 
   sock.ev.on("creds.update", saveCreds);
 
@@ -250,3 +253,43 @@ async function connectToWhatsApp() {
 }
 
 connectToWhatsApp();
+
+// Servidor HTTP interno para envío de mensajes salientes (Notificaciones automáticas / Lista de espera)
+const http = require("http");
+const outboundServer = http.createServer((req, res) => {
+  if (req.method === "POST" && req.url === "/send") {
+    let body = "";
+    req.on("data", chunk => { body += chunk; });
+    req.on("end", async () => {
+      try {
+        const parsed = JSON.parse(body || "{}");
+        const phone = parsed.phone || "";
+        const text = parsed.text || "";
+        let cleanPhone = phone.replace(/[^0-9]/g, "");
+        if (!cleanPhone.endsWith("@s.whatsapp.net")) cleanPhone = `${cleanPhone}@s.whatsapp.net`;
+
+        if (globalSock && globalSock.user) {
+          await globalSock.sendMessage(cleanPhone, { text });
+          console.log(`📤 [Outbound Enviado vía Baileys] Para: ${cleanPhone}`);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ status: "sent", to: cleanPhone }));
+        } else {
+          res.writeHead(503, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ status: "not_connected" }));
+        }
+      } catch (err) {
+        console.error("Error en Outbound Baileys:", err.message);
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+  } else {
+    res.writeHead(404);
+    res.end();
+  }
+});
+
+outboundServer.listen(3001, () => {
+  console.log("📡 Servidor Outbound Baileys escuchando en puerto 3001");
+});
+

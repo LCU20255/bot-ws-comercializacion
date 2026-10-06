@@ -32,36 +32,17 @@ passed_tests = 0
 total_tests = 8
 
 # -----------------------------------------------------------------------------
-# TEST 1: FLUJO DE REGISTRO INICIAL OBLIGATORIO (NOMBRE -> CÉDULA -> TELÉFONO)
+# TEST 1: ACCESO DIRECTO AL CATÁLOGO SIN REGISTRO OBLIGATORIO
 # -----------------------------------------------------------------------------
-print("\n[TEST 1] Flujo de Registro Inicial Obligatorio y Protección Anti-@lid...")
+print("\n[TEST 1] Flujo de Acceso Directo al Catálogo (Sin Registro Previo)...")
 phone_test = "+584120001122"
-reset_session(phone_test, keep_registration=False)
+reset_session(phone_test)
 
-# Paso 1.1: Saludo inicial debe pedir nombre y apellido
+# Paso 1.1: Saludo inicial abre inmediatamente el catálogo oficial
 r1 = bot_manager.process_message(phone_test, "Hola, buenas tardes")
-assert "NOMBRE Y APELLIDO COMPLETO" in r1["reply"], "Fallo: No solicitó Nombre y Apellido al iniciar"
-assert r1["state"] == "REGISTER_NAME", "Fallo: El estado no es REGISTER_NAME"
-print("  ✓ Paso 1.1: Saludo recibido -> Solicita Nombre y Apellido correctamente")
-
-# Paso 1.2: Enviar nombre debe solicitar cédula
-r2 = bot_manager.process_message(phone_test, "Coronel Marcos Evangelista Perez")
-assert "CÉDULA DE IDENTIDAD" in r2["reply"], "Fallo: No solicitó Cédula"
-assert r2["state"] == "REGISTER_CEDULA", "Fallo: El estado no es REGISTER_CEDULA"
-print("  ✓ Paso 1.2: Nombre recibido -> Solicita Cédula de Identidad")
-
-# Paso 1.3: Enviar cédula debe solicitar teléfono de contacto real (evitando @lid)
-r3 = bot_manager.process_message(phone_test, "V-15890456")
-assert "TELÉFONO DE CONTACTO" in r3["reply"], "Fallo: No solicitó Teléfono de Contacto"
-assert r3["state"] == "REGISTER_PHONE", "Fallo: El estado no es REGISTER_PHONE"
-print("  ✓ Paso 1.3: Cédula recibida -> Solicita Teléfono de Contacto directo")
-
-# Paso 1.4: Enviar teléfono real debe registrar y abrir Catálogo SIS-COMER
-r4 = bot_manager.process_message(phone_test, "0414-2223344")
-assert "SIS-COMER" in r4["reply"], "Fallo: No mostró saludo oficial SIS-COMER"
-assert "PRODUCTOS DISPONIBLES" in r4["reply"], "Fallo: No mostró productos disponibles"
-assert r4["state"] == "CATALOG", "Fallo: El estado no es CATALOG"
-print("  ✓ Paso 1.4: Teléfono recibido -> Cliente registrado y Catálogo SIS-COMER desplegado")
+assert "CATÁLOGO" in r1["reply"] or "SIS-COMER" in r1["reply"], "Fallo: No mostró Catálogo al iniciar"
+assert r1["state"] == "CATALOG", "Fallo: El estado no es CATALOG"
+print("  ✓ Paso 1.1: Saludo recibido -> Catálogo SIS-COMER desplegado inmediatamente sin registro previo")
 passed_tests += 1
 
 # -----------------------------------------------------------------------------
@@ -161,12 +142,7 @@ print("\n[TEST 6] Pago Previo Obligatorio, Agendamiento y Emisión de Ticket Ofi
 phone_order = "+584143334455"
 reset_session(phone_order, keep_registration=False)
 
-# 6.1 Registro
-bot_manager.process_message(phone_order, "General Domingo Antonio Sifontes")
-bot_manager.process_message(phone_order, "V-11223344")
-bot_manager.process_message(phone_order, "0414-3334455")
-
-# 6.2 Selección de producto
+# 6.1 Selección de producto directo desde catálogo
 r_sel = bot_manager.process_message(phone_order, "1")
 if r_sel["state"] == "SELECTING_SIZE":
     bot_manager.process_message(phone_order, "L")

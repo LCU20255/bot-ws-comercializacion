@@ -70,8 +70,19 @@ class WhatsAppService:
         If Meta Cloud API credentials are configured, sends via official API.
         Otherwise logs the outbound message.
         """
+        # 1. Intentar enviar a través del puente local de Baileys si está activo
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as b_client:
+                b_res = await b_client.post("http://127.0.0.1:3001/send", json={"phone": to_phone, "text": text})
+                if b_res.status_code == 200:
+                    logger.info(f"Mensaje WhatsApp enviado exitosamente vía Baileys a {to_phone}")
+                    return True
+        except Exception:
+            pass
+
+        # 2. Si no hay Baileys y tampoco Meta Cloud API configurado, registrar en log
         if not self.token or not self.phone_number_id:
-            logger.info(f"[SIMULADO] WhatsApp Outbound a {to_phone}:\n{text}")
+            logger.info(f"[SIMULADO / LOG] WhatsApp Outbound a {to_phone}:\n{text}")
             return True
 
         url = f"https://graph.facebook.com/v21.0/{self.phone_number_id}/messages"
@@ -114,4 +125,51 @@ class WhatsAppService:
             logger.error(f"Excepción enviando mensaje WhatsApp a {to_phone}: {e}")
             return False
 
+    def send_message_sync(self, to_phone: str, text: str, image_url: Optional[str] = None) -> bool:
+        """Envío síncrono o despachado en hilo de fondo para facilitar llamadas desde handlers síncronos"""
+        import asyncio
+        import threading
+        try:
+            loop = asyncio.get_running_loop()
+            asyncio.create_task(self.send_message(to_phone, text, image_url))
+            return True
+        except RuntimeError:
+            t = threading.Thread(target=lambda: asyncio.run(self.send_message(to_phone, text, image_url)))
+            t.daemon = True
+            t.start()
+            return True
+
 wa_service = WhatsAppService()
+
+def notify_waitlist_stock_available(product_id: int, product_name: str) -> int:
+    """
+    Detecta automáticamente si hay clientes en lista de espera para este producto
+    y les envía el mensaje de aviso de reposición inmediata.
+    """
+    from app.database import get_pending_waitlist_for_product, mark_waitlist_notified
+    from datetime import datetime
+
+    pending = get_pending_waitlist_for_product(product_id, product_name)
+    if not pending:
+        return 0
+
+    now_hour = datetime.now().hour
+    greeting = "Buenas tardes" if 12 <= now_hour < 19 else ("Buenos días" if now_hour < 12 else "Buenas noches")
+
+    count = 0
+    for item in pending:
+        client_name = item.get("client_name") or "Estimado Cliente"
+        phone = item["phone"]
+        msg = (
+            f"👋 ¡Hola, {client_name}! {greeting}.\n\n"
+            "Nos estamos comunicando de *Complejo Industrial Tiuna — Equipo de Comercialización*.\n\n"
+            f"📦 Le informamos que el producto *{product_name}* que estaba esperando ya se encuentra *DISPONIBLE* en nuestro inventario.\n\n"
+            "Puede responder a este mensaje en cualquier momento para coordinar y procesar su solicitud. ¡Estamos a su entera orden!"
+        )
+        wa_service.send_message_sync(phone, msg)
+        mark_waitlist_notified(item["id"])
+        count += 1
+        logger.info(f"Cliente {client_name} ({phone}) notificado por reposición de stock de {product_name}")
+
+    return count
+

@@ -15,7 +15,8 @@ from app.database import (
     create_order,
     get_all_config,
     is_maintenance_active,
-    is_within_business_hours
+    is_within_business_hours,
+    add_to_waitlist
 )
 
 logger = logging.getLogger(__name__)
@@ -26,7 +27,7 @@ user_sessions: Dict[str, Dict[str, Any]] = {}
 def get_session(phone: str) -> Dict[str, Any]:
     if phone not in user_sessions:
         user_sessions[phone] = {
-            "state": "INIT",           # INIT -> REGISTER_NAME -> REGISTER_CEDULA -> REGISTER_PHONE -> CATALOG
+            "state": "CATALOG",        # Inicia directamente en el catálogo sin registro previo obligatorio
             "cart": [],                # [{"product_id", "name", "qty", "unit_price", "subtotal", "size"}]
             "client_name": None,       # MAYÚSCULAS
             "cedula": None,            # MAYÚSCULAS
@@ -50,7 +51,7 @@ def get_session(phone: str) -> Dict[str, Any]:
 def reset_session(phone: str, keep_registration: bool = True):
     existing = user_sessions.get(phone, {})
     user_sessions[phone] = {
-        "state": "CATALOG" if (keep_registration and existing.get("client_name") and existing.get("cedula")) else "INIT",
+        "state": "CATALOG",
         "cart": [],
         "client_name": existing.get("client_name") if keep_registration else None,
         "cedula": existing.get("cedula") if keep_registration else None,
@@ -74,11 +75,11 @@ class BotFlowManager:
     """
     Gestor del flujo conversacional para SIS-COMER (Complejo Industrial Tiuna).
     Flujo:
-    1. Registro inicial obligatorio: Nombre y Apellido, Cédula, Teléfono de contacto.
-    2. Catálogo exclusivo de productos con Stock > 0 (con tallas si aplica y precios duales $ / Bs BCV).
+    1. Acceso directo al Catálogo Oficial (sin barreras de registro inicial).
+    2. Catálogo dinámico exclusivo con Stock > 0 (con tallas si aplica y precios duales $ / Bs BCV).
     3. Carrito y cálculo de totales ($ y Bs).
-    4. Pago previo obligatorio: Subida de comprobante de pago por imagen/texto.
-    5. Procesamiento OCR del recibo, vinculación con tasa BCV histórica de la fecha de pago y purga del archivo temporal.
+    4. Pago previo obligatorio: Envío de comprobante de pago por imagen/texto.
+    5. Procesamiento OCR del recibo, vinculación con tasa BCV histórica y purga de imagen temporal.
     6. Agendamiento de retiro (fecha y hora) post-pago y emisión de ticket CIT-YYMMDD-XXX.
     """
 
@@ -113,12 +114,7 @@ class BotFlowManager:
         # Comandos globales de reinicio o volver al menú
         if clean_text.lower() in ["0", "menu", "menú", "inicio", "empezar", "reset", "cancelar"]:
             reset_session(phone, keep_registration=True)
-            if not session.get("client_name") or not session.get("cedula") or not session.get("contact_phone"):
-                session["state"] = "INIT"
-                return self._prompt_initial_registration(session, phone)
-            else:
-                session["state"] = "CATALOG"
-                return self._build_catalog_menu(session, is_off_hours=is_off_hours)
+            return self._build_catalog_menu(session, is_off_hours=is_off_hours)
 
         # Comando de Asesor Comercial
         if clean_text.lower() in ["asesor", "humano", "asesoria", "asesoría", "ayuda"]:
@@ -137,46 +133,32 @@ class BotFlowManager:
                 "state": "WAITING_ADVISOR"
             }
 
-        # -------------------------------------------------------------
-        # ESTADO 1: REGISTRO INICIAL OBLIGATORIO (Nombre, Cédula, Teléfono)
-        # -------------------------------------------------------------
-        if current_state in ["INIT", "REGISTER_NAME", "REGISTER_CEDULA", "REGISTER_PHONE"]:
-            # Intentar extracción múltiple si el usuario envió todo en un solo mensaje
-            # Ej: "Carlos Mendez V-18456123 04141234567"
-            self._try_extract_all_registration_data(clean_text, session, phone)
-            
-            if not session.get("client_name"):
-                session["state"] = "REGISTER_NAME"
-                return self._prompt_initial_registration(session, phone)
-
-            if not session.get("cedula"):
-                session["state"] = "REGISTER_CEDULA"
+        # Si menciona un producto directamente desde cualquier estado que no sea pago o fecha
+        if matched_product and current_state in ["CATALOG", "INIT"]:
+            if matched_product.get("stock", 0) <= 0:
+                session["waitlist_product_name"] = matched_product["name"]
+                session["waitlist_product_id"] = matched_product["id"]
+                session["state"] = "WAITLIST_CONFIRM"
                 return {
                     "reply": (
-                        f"👋 Saludos cordiales, *{session['client_name']}*.\n\n"
-                        "🪪 Indíquenos su *NÚMERO DE CÉDULA DE IDENTIDAD* (Ejemplo: V-18456123 o 18456123):"
+                        f"⚠️ El artículo *{matched_product['name']}* se encuentra actualmente *AGOTADO / SIN STOCK* en nuestro inventario.\n\n"
+                        "¿Desea que le avisemos automáticamente apenas ingrese nuevo stock a nuestro almacén?\n\n"
+                        "1️⃣ *Sí, avisarme cuando esté disponible*\n"
+                        "2️⃣ *Ver productos disponibles en catálogo*\n\n"
+                        "👉 Responda *1* para anotarse en la lista de espera o *2* para ver el catálogo."
                     ),
                     "image_url": None,
-                    "state": "REGISTER_CEDULA"
+                    "state": "WAITLIST_CONFIRM"
                 }
-
-            if not session.get("contact_phone"):
-                session["state"] = "REGISTER_PHONE"
-                opt_hint = f"\n*(O responda *1* para usar este mismo número de WhatsApp: {self._format_phone(phone)})*" if self._is_valid_phone(phone) else ""
-                return {
-                    "reply": (
-                        f"👤 *CLIENTE:* {session['client_name']}\n"
-                        f"🪪 *CÉDULA:* {session['cedula']}\n\n"
-                        "📱 Por favor, indíquenos su *NÚMERO DE TELÉFONO DE CONTACTO* directo para coordinar la entrega y retiro:\n"
-                        f"*(Ejemplo: 0412-1234567 o 0414-9876543)*{opt_hint}"
-                    ),
-                    "image_url": None,
-                    "state": "REGISTER_PHONE"
-                }
-
-            # Registro completado, pasamos directo al catálogo
-            session["state"] = "CATALOG"
-            return self._build_catalog_menu(session, is_off_hours=is_off_hours)
+            qty = self._extract_quantity(clean_text)
+            if self._product_needs_size(matched_product):
+                session["pending_item"] = {"product": matched_product, "qty": qty}
+                session["state"] = "SELECTING_SIZE"
+                return self._prompt_for_size(matched_product)
+            else:
+                self._add_to_cart(session, matched_product, qty)
+                session["state"] = "CART_VIEW"
+                return self._build_cart_view(session)
 
         # -------------------------------------------------------------
         # ESTADO 2: CATÁLOGO DINÁMICO (Stock > 0 y Tasa BCV Oficial)
@@ -187,6 +169,9 @@ class BotFlowManager:
 
             # Selección por número
             catalog_products = get_available_catalog_products()
+            waitlist_idx = len(catalog_products) + 1
+            advisor_idx = len(catalog_products) + 2
+
             if analysis["intent"] == "NUMERIC_OPTION":
                 val = analysis.get("value")
                 if val and 1 <= val <= len(catalog_products):
@@ -199,26 +184,47 @@ class BotFlowManager:
                         self._add_to_cart(session, selected, qty=1)
                         session["state"] = "CART_VIEW"
                         return self._build_cart_view(session)
-                elif val == len(catalog_products) + 1:
+                elif val == waitlist_idx:
+                    session["state"] = "WAITLIST_PRODUCT"
+                    return {
+                        "reply": (
+                            "📝 *LISTA DE ESPERA Y DISPONIBILIDAD*\n"
+                            "*Complejo Industrial Tiuna — Equipo de Comercialización*\n\n"
+                            "Indíquenos: *¿Cuál es el producto que está buscando o requiere?*\n"
+                            "*(Ejemplo: Chaleco táctico, Chaqueta patriota, Botas, Condecoraciones, etc.)*"
+                        ),
+                        "image_url": None,
+                        "state": "WAITLIST_PRODUCT"
+                    }
+                elif val == advisor_idx:
                     return self._build_advisor_response(phone, advisor_name)
                 elif val == 0:
                     reset_session(phone, keep_registration=True)
                     return self._build_catalog_menu(session, is_off_hours=is_off_hours)
                 else:
                     return {
-                        "reply": "⚠️ Opción no válida. Por favor seleccione el número de la lista o escriba el nombre del artículo.",
+                        "reply": "⚠️ Opción no válida. Por favor seleccione un número de la lista o escriba el nombre del artículo.",
                         "image_url": None,
                         "state": "CATALOG"
                     }
 
             # Si nombró un producto directamente
             if matched_product:
-                # Verificar que el producto coincidente tenga stock > 0
+                # Verificar si el producto coincidente tiene stock <= 0
                 if matched_product.get("stock", 0) <= 0:
+                    session["waitlist_product_name"] = matched_product["name"]
+                    session["waitlist_product_id"] = matched_product["id"]
+                    session["state"] = "WAITLIST_CONFIRM"
                     return {
-                        "reply": f"⚠️ Lo sentimos, el artículo *{matched_product['name']}* se encuentra actualmente *AGOTADO* en nuestro taller e inventario.\n\nPor favor elija otro producto disponible del catálogo escribiendo *0*.",
+                        "reply": (
+                            f"⚠️ El artículo *{matched_product['name']}* se encuentra actualmente *AGOTADO / SIN STOCK* en nuestro inventario.\n\n"
+                            "¿Desea que le avisemos automáticamente apenas ingrese nuevo stock a nuestro almacén?\n\n"
+                            "1️⃣ *Sí, avisarme cuando esté disponible*\n"
+                            "2️⃣ *Ver productos disponibles en catálogo*\n\n"
+                            "👉 Responda *1* para anotarse en la lista de espera o *2* para ver el catálogo."
+                        ),
                         "image_url": None,
-                        "state": "CATALOG"
+                        "state": "WAITLIST_CONFIRM"
                     }
                 qty = self._extract_quantity(clean_text)
                 if self._product_needs_size(matched_product):
@@ -230,7 +236,118 @@ class BotFlowManager:
                     session["state"] = "CART_VIEW"
                     return self._build_cart_view(session)
 
+            # Si escribe texto indicando que no encuentra su producto o busca otro
+            if any(w in clean_text.lower() for w in ["no encuentro", "no esta", "no está", "no aparece", "espera", "lista de espera", "otro"]):
+                session["state"] = "WAITLIST_PRODUCT"
+                return {
+                    "reply": (
+                        "📝 *LISTA DE ESPERA Y DISPONIBILIDAD*\n"
+                        "*Complejo Industrial Tiuna — Equipo de Comercialización*\n\n"
+                        "Indíquenos: *¿Cuál es el producto que está buscando o requiere?*\n"
+                        "*(Ejemplo: Chaleco táctico, Chaqueta patriota, Botas, Condecoraciones, etc.)*"
+                    ),
+                    "image_url": None,
+                    "state": "WAITLIST_PRODUCT"
+                }
+
             return self._build_catalog_menu(session, is_off_hours=is_off_hours)
+
+        # -------------------------------------------------------------
+        # ESTADO: CONFIRMACIÓN DE LISTA DE ESPERA (PRODUCTO SIN STOCK)
+        # -------------------------------------------------------------
+        elif current_state == "WAITLIST_CONFIRM":
+            if clean_text in ["1", "si", "sí", "avisar", "avisame", "avísame", "esperar", "lista"]:
+                prod_name = session.get("waitlist_product_name", "Producto Solicitado")
+                prod_id = session.get("waitlist_product_id")
+                if session.get("client_name") and session["client_name"] != "CLIENTE":
+                    add_to_waitlist(phone, session["client_name"], prod_name, prod_id)
+                    session["state"] = "CATALOG"
+                    return {
+                        "reply": (
+                            f"✅ *¡Perfecto! Nos estaremos comunicando con usted cuando el producto que requiera esté disponible.*\n\n"
+                            f"Hemos registrado su solicitud para *{prod_name}* en el sistema de *Complejo Industrial Tiuna — Equipo de Comercialización*.\n\n"
+                            "En cuanto ingrese stock o sea incorporado al inventario, el sistema le enviará un mensaje automático a este número de WhatsApp.\n\n"
+                            "¡Gracias por contactarnos! (Escriba *0* si desea volver al catálogo)."
+                        ),
+                        "image_url": None,
+                        "state": "CATALOG"
+                    }
+                else:
+                    session["state"] = "WAITLIST_NAME"
+                    return {
+                        "reply": (
+                            f"👍 Excelente. Solicitud para: *{prod_name}*.\n\n"
+                            "✍️ *Por favor, indíquenos su Nombre y Apellido* para registrar su aviso en el sistema:"
+                        ),
+                        "image_url": None,
+                        "state": "WAITLIST_NAME"
+                    }
+            elif clean_text in ["2", "no", "catalogo", "catálogo", "0"]:
+                reset_session(phone, keep_registration=True)
+                return self._build_catalog_menu(session, is_off_hours=is_off_hours)
+            else:
+                return {
+                    "reply": "👉 Por favor responda *1* para registrarse en la lista de espera o *2* para volver al catálogo.",
+                    "image_url": None,
+                    "state": "WAITLIST_CONFIRM"
+                }
+
+        # -------------------------------------------------------------
+        # ESTADO: NOMBRE DEL PRODUCTO BUSCADO (NO ENCONTRADO O SIN STOCK)
+        # -------------------------------------------------------------
+        elif current_state == "WAITLIST_PRODUCT":
+            if clean_text in ["0", "menu", "menú", "cancelar"]:
+                reset_session(phone, keep_registration=True)
+                return self._build_catalog_menu(session, is_off_hours=is_off_hours)
+
+            session["waitlist_product_name"] = clean_text.upper()
+            if session.get("client_name") and session["client_name"] != "CLIENTE":
+                add_to_waitlist(phone, session["client_name"], session["waitlist_product_name"])
+                session["state"] = "CATALOG"
+                return {
+                    "reply": (
+                        f"✅ *¡Perfecto! Nos estaremos comunicando con usted cuando el producto que requiera esté disponible.*\n\n"
+                        f"Hemos registrado su solicitud para *{session['waitlist_product_name']}* en el sistema de *Complejo Industrial Tiuna — Equipo de Comercialización*.\n\n"
+                        "En cuanto se reponga el stock o sea incorporado al inventario, recibirá un aviso automático a este WhatsApp.\n\n"
+                        "¡Gracias por contactarnos! (Escriba *0* si desea volver al catálogo)."
+                    ),
+                    "image_url": None,
+                    "state": "CATALOG"
+                }
+            else:
+                session["state"] = "WAITLIST_NAME"
+                return {
+                    "reply": (
+                        f"👍 Entendido, producto solicitado: *{session['waitlist_product_name']}*.\n\n"
+                        "✍️ *Por favor, indíquenos su Nombre y Apellido* para registrar su solicitud en el sistema:"
+                    ),
+                    "image_url": None,
+                    "state": "WAITLIST_NAME"
+                }
+
+        # -------------------------------------------------------------
+        # ESTADO: CAPTURA DE NOMBRE PARA LISTA DE ESPERA
+        # -------------------------------------------------------------
+        elif current_state == "WAITLIST_NAME":
+            if clean_text in ["0", "menu", "menú", "cancelar"]:
+                reset_session(phone, keep_registration=True)
+                return self._build_catalog_menu(session, is_off_hours=is_off_hours)
+
+            session["client_name"] = clean_text.upper()
+            prod_name = session.get("waitlist_product_name", "Producto Solicitado")
+            prod_id = session.get("waitlist_product_id")
+            add_to_waitlist(phone, session["client_name"], prod_name, prod_id)
+            session["state"] = "CATALOG"
+            return {
+                "reply": (
+                    f"✅ *¡Perfecto, {session['client_name']}! Nos estaremos comunicando con usted cuando el producto que requiera esté disponible.*\n\n"
+                    f"Hemos registrado su solicitud para *{prod_name}* en el sistema de *Complejo Industrial Tiuna — Equipo de Comercialización*.\n\n"
+                    "En cuanto ingrese stock o sea incorporado al inventario, el sistema le enviará un mensaje automático a este número de WhatsApp.\n\n"
+                    "¡Gracias por contactarnos! (Escriba *0* si desea volver al catálogo)."
+                ),
+                "image_url": None,
+                "state": "CATALOG"
+            }
 
         # -------------------------------------------------------------
         # ESTADO 3: SELECCIÓN DE TALLA
@@ -456,8 +573,8 @@ class BotFlowManager:
             final_phone = self._format_phone(phone) or "POR ASIGNAR"
 
         order_data = {
-            "client_name": session["client_name"],
-            "cedula": session["cedula"],
+            "client_name": session.get("client_name") or "CLIENTE GENERAL",
+            "cedula": session.get("cedula") or "S/C",
             "phone": final_phone,
             "items_summary": items_summary,
             "items_detail": cart,
@@ -521,9 +638,9 @@ class BotFlowManager:
     def _prompt_initial_registration(self, session: Dict[str, Any], phone: str) -> Dict[str, Any]:
         return {
             "reply": (
-                "🇻🇪 *BIENVENIDO A SIS-COMER* 🪖\n"
-                "*Complejo Industrial Tiuna — Sistema de Comercialización e Intendencia Militar*\n\n"
-                "Para iniciar su atención y gestionar su pedido de prendas e implementos militares, por favor indíquenos sus datos de identificación:\n\n"
+                "👋 *¡Bienvenido! Soy SIS-COMER, tu asistente virtual.*\n"
+                "🏭 *Complejo Industrial Tiuna — Equipo de Comercialización*\n\n"
+                "Para gestionar su pedido, por favor indíquenos sus datos de identificación:\n\n"
                 "✍️ *Por favor, escriba su NOMBRE Y APELLIDO COMPLETO:*"
             ),
             "image_url": None,
@@ -566,35 +683,45 @@ class BotFlowManager:
         # FILTRO ESTRICTO: ÚNICAMENTE PRODUCTOS CON STOCK > 0
         products = get_available_catalog_products()
         bcv_rate = bcv_service.get_rate_for_date()
-        client_name = session.get("client_name") or "CLIENTE"
 
         lines = []
         if is_off_hours:
             lines.append("🌙 *AVISO DE HORARIO:* Fuera de horario laboral presencial (8:00 AM a 5:00 PM). Puede realizar su solicitud y pago en este momento y su retiro quedará programado.")
             lines.append("──────────────────────")
 
-        lines.append(f"👋 Saludos, *{client_name}*. Bienvenido al catálogo oficial de *SIS-COMER*.\n")
+        lines.append("👋 ¡Bienvenido! Soy *SIS-COMER*, tu asistente virtual.")
+        lines.append("🏭 *Complejo Industrial Tiuna — Equipo de Comercialización*\n")
         lines.append(f"📊 *Tasa Oficial BCV:* Bs. {bcv_rate:,.2f} / $\n")
-        lines.append("📦 *PRODUCTOS DISPONIBLES EN STOCK PARA ENTREGA INMEDIATA:*\n")
 
         if not products:
-            lines.append("⚠️ *Actualmente no hay artículos con existencia inmediata en almacén.*")
+            session["state"] = "WAITLIST_PRODUCT"
+            lines.append("⚠️ *En este momento todos nuestros productos se encuentran en proceso de reposición de inventario.*\n")
+            lines.append("📝 *¿Qué producto o requerimiento está buscando?*")
+            lines.append("Escriba el *nombre del producto que requiere* y tomaremos sus datos para avisarle automáticamente en cuanto esté disponible.")
+            lines.append("\n• Escriba *Asesor* si desea comunicarse con un asesor comercial.")
+            lines.append("• Escriba *0* para reiniciar.")
         else:
+            lines.append("📦 *PRODUCTOS DISPONIBLES EN STOCK PARA ENTREGA INMEDIATA:*\n")
             for idx, p in enumerate(products, 1):
                 price_val = self._safe_float(p.get("price", 0.0))
                 price_ves = price_val * bcv_rate
                 lines.append(f"{idx}️⃣ *{p['name']}* — ${price_val:.2f} Ref *(Bs. {price_ves:,.2f})*")
 
-        lines.append(f"\n{len(products) + 1}️⃣ 👨‍💼 *Hablar con un Asesor Comercial*")
-        lines.append("\n👉 *¿Qué artículo desea solicitar?*")
-        lines.append("• Responda con el *número del producto* o su nombre.")
-        lines.append(f"• Responda *{len(products) + 1}* para atención con un asesor.")
-        lines.append("• Escriba *0* para reiniciar el menú.")
+            waitlist_idx = len(products) + 1
+            advisor_idx = len(products) + 2
+
+            lines.append(f"\n{waitlist_idx}️⃣ 🔍 *¿Buscas otro producto o sin existencia? (Lista de espera)*")
+            lines.append(f"{advisor_idx}️⃣ 👨‍💼 *Hablar con un Asesor Comercial*")
+            lines.append("\n👉 *¿Qué artículo desea solicitar?*")
+            lines.append("• Responda con el *número del producto* o su nombre.")
+            lines.append(f"• Responda *{waitlist_idx}* si busca un producto no listado o sin stock.")
+            lines.append(f"• Responda *{advisor_idx}* para atención con un asesor.")
+            lines.append("• Escriba *0* para reiniciar el menú.")
 
         return {
             "reply": "\n".join(lines),
             "image_url": None,
-            "state": "CATALOG"
+            "state": session.get("state", "CATALOG")
         }
 
     def _build_cart_view(self, session: Dict[str, Any]) -> Dict[str, Any]:

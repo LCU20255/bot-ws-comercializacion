@@ -13,14 +13,14 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <link rel="stylesheet" href="/static/css/admin.css">
+  <link rel="stylesheet" href="/static/css/admin.css?v=2">
 </head>
 <body>
   <div class="app-container">
     <!-- Sidebar -->
     <aside class="sidebar">
       <div class="brand">
-        <img src="/static/images/logo_tiuna.png" alt="Complejo Industrial Tiuna" class="brand-logo-img">
+        <img src="/static/images/logo_tiuna.png?v=black" alt="Complejo Industrial Tiuna" class="brand-logo-img">
         <div class="brand-info">
           <h2>SIS-COMER</h2>
           <span>Complejo Industrial Tiuna</span>
@@ -135,7 +135,7 @@
             <div class="kpi-card">
               <div class="kpi-icon red"><i class="bi bi-exclamation-triangle-fill"></i></div>
               <div class="kpi-data">
-                <span class="kpi-label">Stock Crítico (Taller)</span>
+                <span class="kpi-label">Stock Crítico (Inventario)</span>
                 <h3 id="kpi-low-stock">0</h3>
               </div>
             </div>
@@ -189,15 +189,15 @@
           </div>
         </section>
 
-        <!-- TAB 2: INVENTARIO & KARDEX MILITAR -->
+        <!-- TAB 2: INVENTARIO & KARDEX -->
         <section id="tab-inventory" class="tab-view">
           <div class="section-header">
             <div>
-              <h2>Control de Inventario & Kardex Militar</h2>
-              <p>Auditoría de confección, entradas de taller y salidas por ventas en SIS-COMER.</p>
+              <h2>Control de Inventario & Kardex</h2>
+              <p>Auditoría y control de movimientos de inventario en SIS-COMER.</p>
             </div>
             <button class="btn btn-primary" onclick="openBatchStockModal()">
-              <i class="bi bi-plus-square"></i> Ingresar Lote de Confección
+              <i class="bi bi-plus-square"></i> Ingresar al Inventario
             </button>
           </div>
 
@@ -205,7 +205,7 @@
           <div id="low-stock-alert-box" class="stock-alert-banner" style="display: none;">
             <i class="bi bi-exclamation-octagon-fill"></i>
             <div>
-              <strong>ALERTA DE CONFECCIÓN:</strong> Artículos con existencia igual o inferior a 20 unidades. Se requiere orden de taller.
+              <strong>ALERTA DE INVENTARIO:</strong> Artículos con existencia igual o inferior a 20 unidades. Se requiere reposición.
               <div id="low-stock-list" class="low-stock-badges-container"></div>
             </div>
           </div>
@@ -234,6 +234,37 @@
                 <tbody id="kardex-tbody">
                   <tr>
                     <td colspan="9" class="text-center text-muted" style="padding: 35px;">Cargando kardex...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Tabla de Lista de Espera por Productos sin Stock -->
+          <div class="card table-card" style="margin-top: 25px;">
+            <div class="card-header" style="padding: 16px 20px; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <h3 style="font-size: 1.1rem; color: #0f172a; margin: 0;"><i class="bi bi-clock-history"></i> Lista de Espera por Stock (Clientes Registrados)</h3>
+                <small class="text-muted">El sistema notifica automáticamente a estos clientes al ingresar o reponer stock del producto.</small>
+              </div>
+              <button class="btn btn-sm btn-secondary" onclick="loadWaitlist()"><i class="bi bi-arrow-clockwise"></i> Actualizar</button>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Fecha Solicitud</th>
+                    <th>Cliente</th>
+                    <th>Teléfono WhatsApp</th>
+                    <th>Producto Requerido</th>
+                    <th>Estado</th>
+                    <th>Acción</th>
+                  </tr>
+                </thead>
+                <tbody id="waitlist-tbody">
+                  <tr>
+                    <td colspan="7" class="text-center text-muted" style="padding: 30px;">Cargando lista de espera...</td>
                   </tr>
                 </tbody>
               </table>
@@ -425,6 +456,22 @@
 
             <div class="card">
               <div class="card-header">
+                <h3><i class="bi bi-wrench-adjustable-circle"></i> Mensaje de Modo Mantenimiento</h3>
+              </div>
+              <div class="card-body">
+                <form id="form-settings-maint" onsubmit="saveConfig(event)">
+                  <div class="form-group">
+                    <label>Mensaje Automático para Clientes</label>
+                    <textarea id="cfg-maint-msg" rows="3" placeholder="Mensaje que responderá el bot mientras el mantenimiento esté activo...">¡Hola! En este momento nos encontramos en proceso de mantenimiento. Por favor comunícate con nosotros el día de mañana de 8:00 AM a 5:00 PM.</textarea>
+                    <small class="text-muted" style="display: block; margin-top: 4px;">Este mensaje será respondido de inmediato por WhatsApp a los clientes cuando active el botón de mantenimiento superior.</small>
+                  </div>
+                  <button type="submit" class="btn btn-primary">Guardar Mensaje de Mantenimiento</button>
+                </form>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header">
                 <h3><i class="bi bi-shield-lock"></i> Parámetros de Sede & Asesor</h3>
               </div>
               <div class="card-body">
@@ -531,11 +578,11 @@
     </div>
   </div>
 
-  <!-- MODAL: AGREGAR LOTE DE CONFECCIÓN (KARDEX) -->
+  <!-- MODAL: AGREGAR LOTE AL INVENTARIO (KARDEX) -->
   <div class="modal" id="batch-stock-modal">
     <div class="modal-dialog">
       <div class="modal-header">
-        <h3><i class="bi bi-box-arrow-in-down"></i> Ingreso de Lote Terminado de Taller</h3>
+        <h3><i class="bi bi-box-arrow-in-down"></i> Ingreso de Lote al Inventario</h3>
         <button class="modal-close" onclick="closeBatchStockModal()">&times;</button>
       </div>
       <form id="batch-stock-form" onsubmit="submitBatchStock(event)">
@@ -546,16 +593,16 @@
           </select>
         </div>
         <div class="form-group">
-          <label>Cantidad Producida / Terminada (Unidades) *</label>
+          <label>Cantidad a Ingresar (Unidades) *</label>
           <input type="number" id="batch_quantity" min="1" required placeholder="Ej: 50">
         </div>
         <div class="form-group">
-          <label>Responsable de Taller / Confección</label>
-          <input type="text" id="batch_created_by" value="TALLER_CONFECCION_TIUNA">
+          <label>Responsable / Origen</label>
+          <input type="text" id="batch_created_by" value="ALMACEN_TIUNA">
         </div>
         <div class="form-group">
-          <label>Observaciones de Producción</label>
-          <textarea id="batch_notes" rows="2" placeholder="Lote finalizado corte y costura..."></textarea>
+          <label>Observaciones del Lote</label>
+          <textarea id="batch_notes" rows="2" placeholder="Lote ingresado al inventario..."></textarea>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" onclick="closeBatchStockModal()">Cancelar</button>
@@ -615,6 +662,10 @@
           <label>Descripción Técnica Reglamentaria</label>
           <textarea id="prod_desc" rows="3" placeholder="Especificaciones, material, acabados reglamentarios..."></textarea>
         </div>
+        <div class="form-group">
+          <label>Palabras Clave de Búsqueda (Opcional, separadas por coma)</label>
+          <input type="text" id="prod_keywords" placeholder="Ej: chaleco, reflectivo, seguridad, proteccion">
+        </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" onclick="closeProductModal()">Cancelar</button>
           <button type="submit" class="btn btn-primary">Guardar Producto</button>
@@ -624,6 +675,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-  <script src="/static/js/admin.js"></script>
+  <script src="/static/js/admin.js?v=2"></script>
 </body>
 </html>
