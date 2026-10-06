@@ -492,6 +492,47 @@
                 </form>
               </div>
             </div>
+            <div class="card">
+              <div class="card-header">
+                <h3><i class="bi bi-wallet2"></i> Cuentas y Métodos de Pago Oficiales</h3>
+              </div>
+              <div class="card-body">
+                <form id="form-settings-payment" onsubmit="saveConfig(event)">
+                  <h4 style="font-size: 0.85rem; color: #166534; margin-bottom: 8px;"><i class="bi bi-phone"></i> Datos de Pago Móvil</h4>
+                  <div class="form-row">
+                    <div class="form-group">
+                      <label>Banco Pago Móvil</label>
+                      <input type="text" id="cfg-pm-bank" placeholder="Ej: Banco de Venezuela (0102)">
+                    </div>
+                    <div class="form-group">
+                      <label>Teléfono Pago Móvil</label>
+                      <input type="text" id="cfg-pm-phone" placeholder="0412-1234567">
+                    </div>
+                  </div>
+                  <div class="form-group">
+                    <label>Cédula / RIF Pago Móvil</label>
+                    <input type="text" id="cfg-pm-id" placeholder="J-408123456 o V-12345678">
+                  </div>
+
+                  <h4 style="font-size: 0.85rem; color: #166534; margin-top: 14px; margin-bottom: 8px;"><i class="bi bi-bank"></i> Datos de Transferencia Bancaria</h4>
+                  <div class="form-row">
+                    <div class="form-group">
+                      <label>Banco Transferencia</label>
+                      <input type="text" id="cfg-tr-bank" placeholder="Ej: Banco de Venezuela">
+                    </div>
+                    <div class="form-group">
+                      <label>Titular de la Cuenta</label>
+                      <input type="text" id="cfg-tr-holder" placeholder="COMPLEJO INDUSTRIAL TIUNA">
+                    </div>
+                  </div>
+                  <div class="form-group">
+                    <label>Número de Cuenta Completo (20 dígitos)</label>
+                    <input type="text" id="cfg-tr-account" placeholder="0102-0501-80-0000123456">
+                  </div>
+                  <button type="submit" class="btn btn-primary"><i class="bi bi-check-circle"></i> Guardar Cuentas de Pago</button>
+                </form>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -551,8 +592,8 @@
         </div>
         <div class="form-row">
           <div class="form-group">
-            <label>Fecha de Retiro *</label>
-            <input type="text" id="edit_pickup_date" required>
+            <label>Fecha de Retiro (DD/MM/AAAA) *</label>
+            <input type="text" id="edit_pickup_date" placeholder="DD/MM/AAAA" required>
           </div>
           <div class="form-group">
             <label>Hora de Retiro *</label>
@@ -638,7 +679,7 @@
         <div class="form-row">
           <div class="form-group">
             <label>¿Requiere Talla? (Ropa, Botas o Calzado)</label>
-            <select id="prod_requires_size">
+            <select id="prod_requires_size" onchange="toggleSizeOptions(this.value)">
               <option value="0">NO (Parches, Barras, Presillas, etc.)</option>
               <option value="1">SÍ (Uniformes, Ropa, Botas, Calzado)</option>
             </select>
@@ -647,6 +688,11 @@
             <label>Stock Disponible</label>
             <input type="number" id="prod_stock" value="100">
           </div>
+        </div>
+        <div class="form-group" id="prod_sizes_group" style="display: none; background: #f8fafc; border: 1px dashed #cbd5e1; padding: 10px 14px; border-radius: 6px;">
+          <label style="color: #166534; font-weight: 700;"><i class="bi bi-rulers"></i> Tallas Disponibles de este Producto (separadas por coma)</label>
+          <input type="text" id="prod_available_sizes" placeholder="Ej: S, M, L, XL, XXL ó 38, 39, 40, 41, 42, 43 ó SMR, MR, LMR">
+          <small class="text-muted" style="display: block; margin-top: 4px;">Estas son las tallas exactas que se le presentarán al cliente como botones/opciones por WhatsApp.</small>
         </div>
         <div class="form-group">
           <label>Foto Real del Producto (Subir archivo o pegar URL)</label>
@@ -717,8 +763,8 @@
         </div>
         <div class="form-row">
           <div class="form-group">
-            <label>Fecha de Retiro (YYYY-MM-DD) *</label>
-            <input type="text" id="conv_pickup_date" required>
+            <label>Fecha de Retiro (DD/MM/AAAA) *</label>
+            <input type="text" id="conv_pickup_date" placeholder="DD/MM/AAAA" required>
           </div>
           <div class="form-group">
             <label>Hora de Retiro *</label>

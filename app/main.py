@@ -157,6 +157,7 @@ class ProductSchema(BaseModel):
     stock: Optional[int] = 100
     is_active: Optional[int] = 1
     requires_size: Optional[int] = 0
+    available_sizes: Optional[str] = ""
     keywords: Optional[str] = ""
     updated_by: Optional[str] = "ADMIN"
 
@@ -199,6 +200,13 @@ class ConfigSchema(BaseModel):
     pickup_address: Optional[str] = None
     pickup_hours: Optional[str] = None
     whatsapp_bot_number: Optional[str] = None
+    pagomovil_bank: Optional[str] = None
+    pagomovil_phone: Optional[str] = None
+    pagomovil_id: Optional[str] = None
+    transfer_bank: Optional[str] = None
+    transfer_account: Optional[str] = None
+    transfer_holder: Optional[str] = None
+    payment_methods_active: Optional[str] = None
 
 # ----------------- VIEWS -----------------
 @app.get("/favicon.ico", include_in_schema=False)

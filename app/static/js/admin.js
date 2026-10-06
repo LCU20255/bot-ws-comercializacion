@@ -5,6 +5,32 @@ let currentSelectedOrder = null;
 let topProductsChartInstance = null;
 let orderStatusChartInstance = null;
 
+// Funciones utilitarias de formateo de fecha a DD/MM/AAAA
+function formatDateDMY(dStr) {
+  if (!dStr) return "-";
+  const s = String(dStr).trim();
+  if (!s || s === "-") return "-";
+  // Si ya es DD/MM/YYYY
+  if (/^\d{2}\/\d{2}\/\d{4}/.test(s)) return s;
+  // Si es YYYY-MM-DD o ISO
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) {
+    return `${m[3]}/${m[2]}/${m[1]}`;
+  }
+  return s;
+}
+
+function formatDateTimeDMY(dtStr) {
+  if (!dtStr) return "-";
+  const s = String(dtStr).trim();
+  if (!s || s === "-") return "-";
+  if (s.includes(" ")) {
+    const [dPart, tPart] = s.split(" ");
+    return `${formatDateDMY(dPart)} ${tPart}`;
+  }
+  return formatDateDMY(s);
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   initTabs();
   loadBCVRate();
@@ -13,6 +39,18 @@ document.addEventListener("DOMContentLoaded", () => {
   loadConfig();
   loadLowStockAlerts();
   loadFinancialMetrics();
+
+  // Actualización en tiempo real sin delay (cada 5 segundos)
+  setInterval(() => {
+    // Si no hay un modal abierto actualmente
+    const anyModalOpen = document.querySelector(".modal.show");
+    if (!anyModalOpen) {
+      loadOrders(false);
+      loadInventoryKardex();
+      loadWaitlist();
+      loadFinancialMetrics();
+    }
+  }, 5000);
 });
 
 // ----------------- SWEETALERT2 HELPERS -----------------
@@ -189,7 +227,7 @@ function renderOrders(data) {
       <tr onclick="openOrderDetail(${item.id})" class="order-row" style="cursor: pointer;">
         <td>
           <span class="ticket-tag">${item.ticket_code}</span>
-          ${item.created_at ? `<br><small class="text-muted" style="font-size: 0.72rem; white-space: nowrap;"><i class="bi bi-clock-history"></i> ${item.created_at}</small>` : ''}
+          ${item.created_at ? `<br><small class="text-muted" style="font-size: 0.72rem; white-space: nowrap;"><i class="bi bi-clock-history"></i> ${formatDateTimeDMY(item.created_at)}</small>` : ''}
         </td>
         <td>
           <strong style="color: #0f172a; font-size: 0.9rem;">${item.client_name}</strong>
@@ -227,7 +265,7 @@ function renderOrders(data) {
           ${item.receipt_ref ? `<span class="badge" style="background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; font-family: monospace; font-size: 0.75rem;">Ref: ${item.receipt_ref}</span>` : '<span class="text-muted" style="font-size: 0.72rem;">Sin Ref OCR</span>'}
         </td>
         <td>
-          <div style="font-weight: 600; color: #1e293b;"><i class="bi bi-calendar3 text-muted"></i> ${item.pickup_date}</div>
+          <div style="font-weight: 600; color: #1e293b;"><i class="bi bi-calendar3 text-muted"></i> ${formatDateDMY(item.pickup_date)}</div>
           <small class="text-muted"><i class="bi bi-clock"></i> ${item.pickup_time}</small>
         </td>
         <td>
@@ -335,7 +373,7 @@ function openOrderDetail(orderId) {
       </div>
       <div>
         <small class="text-muted" style="display: block; font-weight: 600;">FECHA DE REGISTRO</small>
-        <span style="font-size: 0.88rem; color: #334155; font-weight: 600;"><i class="bi bi-clock-history"></i> ${order.created_at || '-'}</span>
+        <span style="font-size: 0.88rem; color: #334155; font-weight: 600;"><i class="bi bi-clock-history"></i> ${formatDateTimeDMY(order.created_at)}</span>
       </div>
       <div>
         <small class="text-muted" style="display: block; font-weight: 600;">ESTADO DE ATENCIÓN</small>
@@ -373,7 +411,7 @@ function openOrderDetail(orderId) {
       </div>
       <div class="ocr-field-row">
         <span>Fecha de Pago Declarada:</span>
-        <strong>${order.receipt_date || '-'}</strong>
+        <strong>${formatDateDMY(order.receipt_date)}</strong>
       </div>
       <div class="ocr-field-row">
         <span>Tasa BCV Aplicada en Pago:</span>
@@ -389,7 +427,7 @@ function openOrderDetail(orderId) {
     <!-- Cita de Retiro -->
     <div style="margin-top: 14px; font-size: 0.9rem; color: #334155; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #e2e8f0; padding-top: 12px;">
       <div>
-        <i class="bi bi-calendar-event"></i> <strong>Retiro Programado:</strong> ${order.pickup_date} a las ${order.pickup_time}
+        <i class="bi bi-calendar-event"></i> <strong>Retiro Programado:</strong> ${formatDateDMY(order.pickup_date)} a las ${order.pickup_time}
       </div>
       <div style="display: flex; gap: 8px;">
         <button class="btn btn-sm btn-primary" onclick="openEditOrderModalDirect(${order.id})"><i class="bi bi-pencil"></i> Editar</button>
@@ -424,7 +462,7 @@ async function loadInventoryKardex() {
       return `
         <tr>
           <td><code style="color: #64748b;">#${m.id}</code></td>
-          <td>${m.created_at || '-'}</td>
+          <td>${formatDateTimeDMY(m.created_at)}</td>
           <td><strong>${m.product_name || 'PRODUCTO #' + m.product_id}</strong></td>
           <td>${badge}</td>
           <td style="font-weight: 700; color: ${isIn ? '#166534' : '#b45309'};">${m.quantity > 0 ? '+' : ''}${m.quantity}</td>
@@ -546,7 +584,7 @@ async function loadWaitlist() {
       return `
         <tr>
           <td><code style="color: #64748b; font-weight: 700;">#${item.id}</code></td>
-          <td><small style="color: #475569; font-weight: 500;"><i class="bi bi-clock-history text-muted"></i> ${item.created_at || '-'}</small></td>
+          <td><small style="color: #475569; font-weight: 500;"><i class="bi bi-clock-history text-muted"></i> ${formatDateTimeDMY(item.created_at)}</small></td>
           <td><strong>${item.client_name || 'CLIENTE'}</strong></td>
           <td>
             <a href="${waLink}" target="_blank" style="color: #0284c7; text-decoration: none; font-weight: 600; display: inline-flex; align-items: center; gap: 4px;">
@@ -659,8 +697,12 @@ async function openConvertWaitlistModal(id) {
     document.getElementById("conv_unit_price").value = unitPrice;
     document.getElementById("conv_amount_usd").value = unitPrice > 0 ? unitPrice.toFixed(2) : "0.00";
 
-    const todayStr = new Date().toISOString().split("T")[0];
-    document.getElementById("conv_pickup_date").value = todayStr;
+    const nowD = new Date();
+    const dDay = String(nowD.getDate()).padStart(2, '0');
+    const dMonth = String(nowD.getMonth() + 1).padStart(2, '0');
+    const dYear = nowD.getFullYear();
+    const todayStrDMY = `${dDay}/${dMonth}/${dYear}`;
+    document.getElementById("conv_pickup_date").value = todayStrDMY;
     document.getElementById("conv_pickup_time").value = "09:00 AM";
 
     document.getElementById("convert-waitlist-modal").classList.add("show");
@@ -831,7 +873,7 @@ function openEditOrderModalDirect(orderId) {
   document.getElementById("edit_items_summary").value = order.items_summary;
   document.getElementById("edit_total_amount").value = order.amount_usd || order.total_amount;
   document.getElementById("edit_payment_method").value = order.payment_method;
-  document.getElementById("edit_pickup_date").value = order.pickup_date;
+  document.getElementById("edit_pickup_date").value = formatDateDMY(order.pickup_date);
   document.getElementById("edit_pickup_time").value = order.pickup_time;
   document.getElementById("edit_status").value = order.status;
 
@@ -936,10 +978,18 @@ function renderProducts(data) {
   }).join("");
 }
 
+function toggleSizeOptions(val) {
+  const grp = document.getElementById("prod_sizes_group");
+  if (grp) {
+    grp.style.display = (val === "1" || val === 1) ? "block" : "none";
+  }
+}
+
 function openProductModal() {
   document.getElementById("product-modal-title").innerText = "Agregar Producto Militar";
   document.getElementById("product-form").reset();
   document.getElementById("prod_id").value = "";
+  toggleSizeOptions(0);
   document.getElementById("product-modal").classList.add("show");
 }
 
@@ -957,6 +1007,9 @@ function editProduct(id) {
   document.getElementById("prod_price").value = p.price;
   document.getElementById("prod_category").value = p.category;
   document.getElementById("prod_requires_size").value = p.requires_size ? "1" : "0";
+  toggleSizeOptions(p.requires_size ? 1 : 0);
+  const sizeInput = document.getElementById("prod_available_sizes");
+  if (sizeInput) sizeInput.value = p.available_sizes || "";
   document.getElementById("prod_stock").value = p.stock;
   document.getElementById("prod_image").value = p.image_url || "";
   document.getElementById("prod_desc").value = p.description || "";
@@ -970,12 +1023,14 @@ async function saveProduct(e) {
   e.preventDefault();
   const id = document.getElementById("prod_id").value;
   const kwEl = document.getElementById("prod_keywords");
+  const sizeInput = document.getElementById("prod_available_sizes");
   const payload = {
     name: document.getElementById("prod_name").value.toUpperCase(),
     price: parseFloat(document.getElementById("prod_price").value),
     price_display: `$${parseFloat(document.getElementById("prod_price").value).toFixed(2)} Ref`,
     category: document.getElementById("prod_category").value.toUpperCase(),
     requires_size: parseInt(document.getElementById("prod_requires_size").value),
+    available_sizes: sizeInput ? sizeInput.value.toUpperCase() : "",
     stock: parseInt(document.getElementById("prod_stock").value),
     image_url: document.getElementById("prod_image").value || "/static/images/placeholder.png",
     description: document.getElementById("prod_desc").value,
@@ -1131,6 +1186,12 @@ async function loadConfig() {
     if (cfg.pickup_address) document.getElementById("cfg-pickup-address").value = cfg.pickup_address;
     if (cfg.advisor_name) document.getElementById("cfg-advisor-name").value = cfg.advisor_name;
     if (cfg.advisor_phone) document.getElementById("cfg-advisor-phone").value = cfg.advisor_phone;
+    if (cfg.pagomovil_bank && document.getElementById("cfg-pm-bank")) document.getElementById("cfg-pm-bank").value = cfg.pagomovil_bank;
+    if (cfg.pagomovil_phone && document.getElementById("cfg-pm-phone")) document.getElementById("cfg-pm-phone").value = cfg.pagomovil_phone;
+    if (cfg.pagomovil_id && document.getElementById("cfg-pm-id")) document.getElementById("cfg-pm-id").value = cfg.pagomovil_id;
+    if (cfg.transfer_bank && document.getElementById("cfg-tr-bank")) document.getElementById("cfg-tr-bank").value = cfg.transfer_bank;
+    if (cfg.transfer_holder && document.getElementById("cfg-tr-holder")) document.getElementById("cfg-tr-holder").value = cfg.transfer_holder;
+    if (cfg.transfer_account && document.getElementById("cfg-tr-account")) document.getElementById("cfg-tr-account").value = cfg.transfer_account;
   } catch (err) {
     console.error("Error cargando configuración:", err);
   }
@@ -1172,7 +1233,13 @@ async function saveConfig(e) {
     off_hours_message: document.getElementById("cfg-offhours-msg")?.value,
     pickup_address: document.getElementById("cfg-pickup-address")?.value,
     advisor_name: document.getElementById("cfg-advisor-name")?.value,
-    advisor_phone: document.getElementById("cfg-advisor-phone")?.value
+    advisor_phone: document.getElementById("cfg-advisor-phone")?.value,
+    pagomovil_bank: document.getElementById("cfg-pm-bank")?.value,
+    pagomovil_phone: document.getElementById("cfg-pm-phone")?.value,
+    pagomovil_id: document.getElementById("cfg-pm-id")?.value,
+    transfer_bank: document.getElementById("cfg-tr-bank")?.value,
+    transfer_holder: document.getElementById("cfg-tr-holder")?.value,
+    transfer_account: document.getElementById("cfg-tr-account")?.value
   };
 
   try {

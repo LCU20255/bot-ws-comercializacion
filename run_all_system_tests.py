@@ -23,13 +23,47 @@ from app.database import (
 )
 from app.bcv_service import bcv_service
 from app.ocr_service import ReceiptOCRService
-from app.bot_flow import bot_manager, reset_session
+from app.bot_flow import bot_manager, reset_session, get_session
 
 # Inicializar Base de Datos
 init_db()
 
+# Asegurar existencia de productos para pruebas si está vacía
+from app.database import create_product, update_order_status, delete_order, get_order_by_id, get_product_by_id, update_config, get_all_config
+existing_p = get_products()
+if len(existing_p) == 0:
+    create_product({
+        "name": "Chaqueta Patriota Tiuna",
+        "category": "TEXTIL MILITAR",
+        "description": "Chaqueta oficial de campaña con velcro",
+        "price": 45.0,
+        "stock": 100,
+        "requires_size": 1,
+        "available_sizes": "S, M, L, XL, XXL",
+        "active": 1
+    })
+    create_product({
+        "name": "Botas Militares Campaña",
+        "category": "CALZADO MILITAR",
+        "description": "Botas de cuero táctico de alta resistencia",
+        "price": 60.0,
+        "stock": 50,
+        "requires_size": 1,
+        "available_sizes": "39, 40, 41, 42, 43, 44",
+        "active": 1
+    })
+    create_product({
+        "name": "Gorra Táctica Patriota",
+        "category": "ACCESORIOS",
+        "description": "Gorra ajustable verde oliva",
+        "price": 15.0,
+        "stock": 80,
+        "requires_size": 0,
+        "active": 1
+    })
+
 passed_tests = 0
-total_tests = 8
+total_tests = 14
 
 # -----------------------------------------------------------------------------
 # TEST 1: ACCESO DIRECTO AL CATÁLOGO SIN REGISTRO OBLIGATORIO
@@ -211,6 +245,138 @@ print(f"  ✓ Total en Bolívares:     Bs. {metrics['total_ves']:,.2f}")
 print(f"  ✓ Total Pedidos:          {metrics['total_orders']}")
 print(f"  ✓ Ventas de Hoy:          ${metrics['today_usd']:.2f} REF (Bs. {metrics['today_ves']:,.2f})")
 print(f"  ✓ Top Productos Vendidos: {len(metrics['top_products'])} productos listados")
+passed_tests += 1
+
+# -----------------------------------------------------------------------------
+# TEST 9: RETORNO DE STOCK A INVENTARIO Y KARDEX POR PEDIDO CANCELADO
+# -----------------------------------------------------------------------------
+print("\n[TEST 9] Retorno de Stock y Kardex al Cancelar un Pedido...")
+# Crear un pedido de prueba con 2 unidades de un producto
+test_prod = get_products()[0]
+p_id = test_prod["id"]
+stock_before_order = test_prod["stock"]
+
+sample_order = create_order({
+    "client_name": "CARLOS CANCELACION",
+    "cedula": "V-20111222",
+    "phone": "0412-9998877",
+    "items_detail": [{"id": p_id, "name": test_prod["name"], "qty": 2, "unit_price": 45.0, "subtotal": 90.0}],
+    "items_summary": f"2X {test_prod['name']}",
+    "total_items": 2,
+    "total_amount": 90.0,
+    "amount_usd": 90.0,
+    "amount_ves": 90.0 * 860.25,
+    "status": "PENDIENTE POR ATENCIÓN"
+})
+order_id_test = sample_order["id"]
+
+prod_after_order = get_product_by_id(p_id)
+assert prod_after_order["stock"] == stock_before_order - 2, "Fallo: No se descontó el stock al crear pedido"
+
+# CANCELAR EL PEDIDO: Debe retornar las 2 unidades a stock
+update_order_status(order_id_test, "CANCELADO")
+prod_after_cancel = get_product_by_id(p_id)
+assert prod_after_cancel["stock"] == stock_before_order, f"Fallo: El stock no retornó. Actual: {prod_after_cancel['stock']}, Esperado: {stock_before_order}"
+
+# Verificar Kardex
+movements = get_inventory_movements(limit=5)
+cancel_mov = next((m for m in movements if m["movement_type"] == "REVERSO_CANCELACION" and m["order_id"] == order_id_test), None)
+assert cancel_mov is not None, "Fallo: No se registró movimiento REVERSO_CANCELACION en Kardex"
+assert cancel_mov["quantity"] == 2, f"Fallo en cantidad de reverso: {cancel_mov['quantity']}"
+print(f"  ✓ Pedido #{order_id_test} cambiado a 'CANCELADO' -> Stock devuelto (+2 uds) con movimiento REVERSO_CANCELACION en Kardex")
+passed_tests += 1
+
+# -----------------------------------------------------------------------------
+# TEST 10: DESCUENTO DE STOCK Y KARDEX AL REACTIVAR PEDIDO CANCELADO
+# -----------------------------------------------------------------------------
+print("\n[TEST 10] Descuento de Stock al Reactivar un Pedido Previamente Cancelado...")
+update_order_status(order_id_test, "CONFIRMADO")
+prod_after_reactivate = get_product_by_id(p_id)
+assert prod_after_reactivate["stock"] == stock_before_order - 2, "Fallo: No se volvió a descontar el stock al reactivar pedido"
+
+movements = get_inventory_movements(limit=5)
+reactivate_mov = next((m for m in movements if m["movement_type"] == "SALIDA_VENTA" and m["order_id"] == order_id_test), None)
+assert reactivate_mov is not None, "Fallo: No se auditó SALIDA_VENTA al reactivar pedido"
+print(f"  ✓ Pedido #{order_id_test} reactivado a 'CONFIRMADO' -> Stock vuelto a descontar (-2 uds) en Kardex")
+passed_tests += 1
+
+# -----------------------------------------------------------------------------
+# TEST 11: RETORNO DE STOCK A INVENTARIO Y KARDEX POR ELIMINACIÓN DE PEDIDO
+# -----------------------------------------------------------------------------
+print("\n[TEST 11] Retorno de Stock y Kardex al Eliminar un Pedido...")
+delete_order(order_id_test)
+prod_after_delete = get_product_by_id(p_id)
+assert prod_after_delete["stock"] == stock_before_order, "Fallo: El stock no retornó al eliminar pedido activo"
+
+movements = get_inventory_movements(limit=5)
+delete_mov = next((m for m in movements if m["movement_type"] == "REVERSO_ELIMINACION" and m["order_id"] == order_id_test), None)
+assert delete_mov is not None, "Fallo: No se registró REVERSO_ELIMINACION en Kardex al eliminar pedido"
+print(f"  ✓ Pedido #{order_id_test} eliminado de BD -> Stock retornado automáticamente (+2 uds) con REVERSO_ELIMINACION en Kardex")
+passed_tests += 1
+
+# -----------------------------------------------------------------------------
+# TEST 12: DETECCIÓN INTELIGENTE DE SENTIMIENTO NEGATIVO Y DERIVACIÓN A ASESOR
+# -----------------------------------------------------------------------------
+print("\n[TEST 12] Detección Inteligente de Inconformidad y Mensajes Negativos...")
+phone_complaint = "+584149991122"
+reset_session(phone_complaint)
+
+complaint_msgs = [
+    "Qué mal servicio, no responden",
+    "Terrible la atención, tardan demasiado",
+    "No entiendo nada, está mal esto"
+]
+for msg in complaint_msgs:
+    r_comp = bot_manager.process_message(phone_complaint, msg)
+    assert r_comp["state"] == "WAITING_ADVISOR", f"Fallo: No derivó a asesor ante queja '{msg}'"
+    assert "asesor" in r_comp["reply"].lower() and "wa.me" in r_comp["reply"], f"Fallo: No ofreció WhatsApp de asesor ante queja '{msg}'"
+
+print("  ✓ Detección NLU: Frases de mal servicio y quejas activan empatía y enlace directo de WhatsApp con asesor humano")
+passed_tests += 1
+
+# -----------------------------------------------------------------------------
+# TEST 13: TALLAS DISPONIBLES CONFIGURABLES Y SELECCIÓN POR BOTÓN
+# -----------------------------------------------------------------------------
+print("\n[TEST 13] Tallas Disponibles Configurables y Selección por Botón...")
+phone_size_test = "+584128889900"
+reset_session(phone_size_test)
+
+# Seleccionar dinámicamente el producto que requiere talla
+avail = get_available_catalog_products()
+size_prod_idx = next(i for i, p in enumerate(avail, 1) if p.get("requires_size") == 1)
+target_sized_prod = avail[size_prod_idx - 1]
+
+r_size_prompt = bot_manager.process_message(phone_size_test, str(size_prod_idx))
+assert r_size_prompt["state"] == "SELECTING_SIZE", "Fallo: No solicitó talla"
+assert "[ 1️⃣ ]" in r_size_prompt["reply"], "Fallo: No mostró botones interactivos para tallas"
+
+# Responder con el botón '2' (Segunda talla disponible)
+r_size_select = bot_manager.process_message(phone_size_test, "2")
+assert r_size_select["state"] == "CART_VIEW", "Fallo: No avanzó a carrito tras elegir botón de talla"
+cart_item = get_session(phone_size_test)["cart"][0]
+assert cart_item["size"] is not None, "Fallo: Talla asignada es None"
+print(f"  ✓ Botón numérico '2' seleccionó exitosamente la talla '{cart_item['size']}' para '{target_sized_prod['name']}'")
+passed_tests += 1
+
+# -----------------------------------------------------------------------------
+# TEST 14: CUENTAS Y MÉTODOS DE PAGO DINÁMICOS DESDE CONFIGURACIÓN
+# -----------------------------------------------------------------------------
+print("\n[TEST 14] Métodos y Cuentas Bancarias Dinámicas en Instrucciones de Pago...")
+update_config({
+    "pagomovil_bank": "Banco Banesco (0134)",
+    "pagomovil_phone": "0414-7778899",
+    "pagomovil_id": "J-998877665",
+    "transfer_bank": "Banco Mercantil",
+    "transfer_account": "0105-0000-00-1111222233",
+    "transfer_holder": "INDUSTRIA MILITAR TIUNA CA"
+})
+
+r_pay_dyn = bot_manager.process_message(phone_size_test, "2")
+assert r_pay_dyn["state"] == "AWAITING_PAYMENT", "Fallo: No avanzó a AWAITING_PAYMENT"
+assert "0414-7778899" in r_pay_dyn["reply"], "Fallo: No reflejó teléfono de pago móvil configurado"
+assert "Banco Banesco" in r_pay_dyn["reply"], "Fallo: No reflejó banco configurado"
+assert "INDUSTRIA MILITAR TIUNA CA" in r_pay_dyn["reply"], "Fallo: No reflejó titular configurado"
+print("  ✓ Datos de Pago Móvil y Transferencia configurados administrativamente se inyectaron en el mensaje de WhatsApp")
 passed_tests += 1
 
 print("\n" + "=" * 80)

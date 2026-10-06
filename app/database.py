@@ -6,7 +6,14 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 import pandas as pd
 from app.config import DATA_DIR, SUPABASE_URL, SUPABASE_KEY
-from app.time_utils import now_vet, now_vet_str, now_vet_date_str, now_vet_time_str
+from app.time_utils import (
+    now_vet,
+    now_vet_str,
+    now_vet_date_str,
+    now_vet_time_str,
+    format_date_dmy,
+    format_datetime_dmy
+)
 
 logger = logging.getLogger(__name__)
 DB_FILE = DATA_DIR / "commercial_bot.db"
@@ -41,7 +48,11 @@ def init_db():
     """)
 
     # Migraciones seguras para products
-    for col, col_type in [("requires_size", "INTEGER DEFAULT 0"), ("min_stock_alert", "INTEGER DEFAULT 20")]:
+    for col, col_type in [
+        ("requires_size", "INTEGER DEFAULT 0"),
+        ("min_stock_alert", "INTEGER DEFAULT 20"),
+        ("available_sizes", "TEXT DEFAULT ''")
+    ]:
         try:
             cursor.execute(f"ALTER TABLE products ADD COLUMN {col} {col_type}")
             conn.commit()
@@ -183,7 +194,15 @@ def init_db():
         "advisor_phone": "+584121234567",
         "advisor_name": "ASESOR COMERCIAL - COMPLEJO INDUSTRIAL TIUNA",
         "pickup_address": "SEDE PRINCIPAL - COMPLEJO INDUSTRIAL TIUNA",
-        "pickup_hours": "LUNES A VIERNES DE 8:00 AM A 5:00 PM"
+        "pickup_hours": "LUNES A VIERNES DE 8:00 AM A 5:00 PM",
+        # Configuración de Métodos de Pago
+        "pagomovil_bank": "BANCO DE VENEZUELA (0102)",
+        "pagomovil_phone": "0412-1234567",
+        "pagomovil_id": "J-408123456",
+        "transfer_bank": "BANCO DE VENEZUELA",
+        "transfer_account": "0102-0501-80-0000123456",
+        "transfer_holder": "COMPLEJO INDUSTRIAL TIUNA",
+        "payment_methods_active": "PAGO MÓVIL, TRANSFERENCIA BANCARIA"
     }
     for k, v in default_config.items():
         cursor.execute("INSERT OR IGNORE INTO system_config (key, value) VALUES (?, ?)", (k, v))
@@ -240,8 +259,8 @@ def create_product(data: Dict[str, Any], updated_by: str = "ADMIN") -> int:
     current_time_vet = now_vet_str()
 
     cursor.execute("""
-        INSERT INTO products (name, slug, description, price, price_display, category, image_url, stock, is_active, requires_size, keywords, updated_at, updated_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO products (name, slug, description, price, price_display, category, image_url, stock, is_active, requires_size, available_sizes, keywords, updated_at, updated_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         name,
         slug,
@@ -253,6 +272,7 @@ def create_product(data: Dict[str, Any], updated_by: str = "ADMIN") -> int:
         int(data.get("stock", 0)),
         int(data.get("is_active", 1)),
         requires_size,
+        data.get("available_sizes", "").strip().upper(),
         data.get("keywords", "").lower(),
         current_time_vet,
         updated_by.upper()
@@ -274,7 +294,7 @@ def update_product(product_id: int, data: Dict[str, Any], updated_by: str = "ADM
 
     cursor.execute("""
         UPDATE products
-        SET name = ?, description = ?, price = ?, price_display = ?, category = ?, image_url = ?, stock = ?, is_active = ?, requires_size = ?, keywords = ?, updated_at = ?, updated_by = ?
+        SET name = ?, description = ?, price = ?, price_display = ?, category = ?, image_url = ?, stock = ?, is_active = ?, requires_size = ?, available_sizes = ?, keywords = ?, updated_at = ?, updated_by = ?
         WHERE id = ?
     """, (
         name,
@@ -286,6 +306,7 @@ def update_product(product_id: int, data: Dict[str, Any], updated_by: str = "ADM
         int(data.get("stock", 0)),
         int(data.get("is_active", 1)),
         requires_size,
+        data.get("available_sizes", "").strip().upper(),
         data.get("keywords", "").lower(),
         current_time_vet,
         updated_by.upper(),
@@ -453,13 +474,16 @@ def get_order_by_ticket(ticket_code: str) -> Optional[Dict[str, Any]]:
     return dict(row) if row else None
 
 def update_order(order_id: int, data: Dict[str, Any]) -> bool:
+    new_status = str(data.get("status", "PENDIENTE")).strip().upper()
+    update_order_status(order_id, new_status)
+
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
         UPDATE orders
         SET client_name = ?, cedula = ?, phone = ?, items_summary = ?,
             total_items = ?, total_amount = ?, payment_method = ?,
-            pickup_date = ?, pickup_time = ?, status = ?, notes = ?
+            pickup_date = ?, pickup_time = ?, notes = ?
         WHERE id = ?
     """, (
         str(data.get("client_name", "")).strip().upper(),
@@ -471,7 +495,6 @@ def update_order(order_id: int, data: Dict[str, Any]) -> bool:
         str(data.get("payment_method", "EFECTIVO / DIVISAS")).strip().upper(),
         str(data.get("pickup_date", "")),
         str(data.get("pickup_time", "")),
-        str(data.get("status", "PENDIENTE")).strip().upper(),
         data.get("notes", ""),
         order_id
     ))
@@ -480,16 +503,158 @@ def update_order(order_id: int, data: Dict[str, Any]) -> bool:
     return True
 
 def update_order_status(order_id: int, status: str) -> bool:
+    """
+    Actualiza el estatus de un pedido y gestiona automáticamente el inventario Kardex:
+    - Si se cambia a CANCELADO/ANULADO: Retorna los productos al stock y crea movimiento REVERSO_CANCELACION en Kardex.
+    - Si se reactiva desde CANCELADO a un estado activo: Vuelve a descontar del stock y crea movimiento SALIDA_VENTA.
+    """
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("UPDATE orders SET status = ? WHERE id = ?", (status.strip().upper(), order_id))
+    cursor.execute("SELECT * FROM orders WHERE id = ?", (order_id,))
+    order_row = cursor.fetchone()
+    if not order_row:
+        conn.close()
+        return False
+
+    order = dict(order_row)
+    old_status = str(order.get("status", "")).strip().upper()
+    new_status = status.strip().upper()
+
+    is_cancelling = new_status in ("CANCELADO", "CANCELADA", "ANULADO", "ANULADA")
+    was_cancelled = old_status in ("CANCELADO", "CANCELADA", "ANULADO", "ANULADA")
+
+    items_detail = []
+    items_raw = order.get("items_detail")
+    if isinstance(items_raw, str):
+        try:
+            items_detail = json.loads(items_raw)
+        except Exception:
+            items_detail = []
+    elif isinstance(items_raw, list):
+        items_detail = items_raw
+
+    now_str = now_vet_str()
+
+    # Caso 1: Cancelación de un pedido activo -> RETORNAR A STOCK CON AUDITORÍA KARDEX
+    if is_cancelling and not was_cancelled:
+        if isinstance(items_detail, list):
+            for it in items_detail:
+                prod_id = it.get("id") or it.get("product_id")
+                qty = int(it.get("qty", 1))
+                if prod_id:
+                    try:
+                        cursor.execute("SELECT stock, name FROM products WHERE id = ?", (prod_id,))
+                        prow = cursor.fetchone()
+                        if prow:
+                            prev_stock = prow["stock"]
+                            new_stock = prev_stock + qty
+                            cursor.execute("UPDATE products SET stock = ?, updated_at = ? WHERE id = ?", (new_stock, now_str, prod_id))
+                            cursor.execute("""
+                                INSERT INTO inventory_movements (
+                                    product_id, movement_type, quantity, previous_stock,
+                                    new_stock, order_id, client_name, created_by, notes, created_at
+                                )
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (
+                                prod_id, "REVERSO_CANCELACION", qty, prev_stock,
+                                new_stock, order_id, order.get("client_name"), "ADMIN_PANEL",
+                                f"Retorno a inventario por pedido cancelado (Ticket: {order.get('ticket_code')})",
+                                now_str
+                            ))
+                    except Exception as e:
+                        logger.error(f"Error retornando stock de producto {prod_id} por cancelación: {e}")
+
+    # Caso 2: Reactivación de un pedido cancelado -> DESCONTAR DE STOCK CON AUDITORÍA KARDEX
+    elif was_cancelled and not is_cancelling:
+        if isinstance(items_detail, list):
+            for it in items_detail:
+                prod_id = it.get("id") or it.get("product_id")
+                qty = int(it.get("qty", 1))
+                if prod_id:
+                    try:
+                        cursor.execute("SELECT stock, name FROM products WHERE id = ?", (prod_id,))
+                        prow = cursor.fetchone()
+                        if prow:
+                            prev_stock = prow["stock"]
+                            new_stock = max(0, prev_stock - qty)
+                            cursor.execute("UPDATE products SET stock = ?, updated_at = ? WHERE id = ?", (new_stock, now_str, prod_id))
+                            cursor.execute("""
+                                INSERT INTO inventory_movements (
+                                    product_id, movement_type, quantity, previous_stock,
+                                    new_stock, order_id, client_name, created_by, notes, created_at
+                                )
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (
+                                prod_id, "SALIDA_VENTA", -qty, prev_stock,
+                                new_stock, order_id, order.get("client_name"), "ADMIN_PANEL",
+                                f"Descuento de inventario por reactivación de pedido (Ticket: {order.get('ticket_code')})",
+                                now_str
+                            ))
+                    except Exception as e:
+                        logger.error(f"Error descontando stock de producto {prod_id} por reactivación: {e}")
+
+    cursor.execute("UPDATE orders SET status = ? WHERE id = ?", (new_status, order_id))
     conn.commit()
     conn.close()
     return True
 
 def delete_order(order_id: int) -> bool:
+    """
+    Elimina un pedido de la base de datos:
+    Si el pedido no estaba cancelado previamente, devuelve sus unidades al stock y audita en Kardex.
+    """
     conn = get_connection()
     cursor = conn.cursor()
+    cursor.execute("SELECT * FROM orders WHERE id = ?", (order_id,))
+    order_row = cursor.fetchone()
+    if not order_row:
+        conn.close()
+        return False
+
+    order = dict(order_row)
+    status_upper = str(order.get("status", "")).strip().upper()
+    was_cancelled = status_upper in ("CANCELADO", "CANCELADA", "ANULADO", "ANULADA")
+
+    items_detail = []
+    items_raw = order.get("items_detail")
+    if isinstance(items_raw, str):
+        try:
+            items_detail = json.loads(items_raw)
+        except Exception:
+            items_detail = []
+    elif isinstance(items_raw, list):
+        items_detail = items_raw
+
+    now_str = now_vet_str()
+
+    # Si el pedido no estaba cancelado, sus productos estaban descontados: retornarlos al stock con Kardex
+    if not was_cancelled and isinstance(items_detail, list):
+        for it in items_detail:
+            prod_id = it.get("id") or it.get("product_id")
+            qty = int(it.get("qty", 1))
+            if prod_id:
+                try:
+                    cursor.execute("SELECT stock, name FROM products WHERE id = ?", (prod_id,))
+                    prow = cursor.fetchone()
+                    if prow:
+                        prev_stock = prow["stock"]
+                        new_stock = prev_stock + qty
+                        cursor.execute("UPDATE products SET stock = ?, updated_at = ? WHERE id = ?", (new_stock, now_str, prod_id))
+                        cursor.execute("""
+                            INSERT INTO inventory_movements (
+                                product_id, movement_type, quantity, previous_stock,
+                                new_stock, order_id, client_name, created_by, notes, created_at
+                            )
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            prod_id, "REVERSO_ELIMINACION", qty, prev_stock,
+                            new_stock, order_id, order.get("client_name"), "ADMIN_PANEL",
+                            f"Retorno a inventario por eliminación de pedido (Ticket: {order.get('ticket_code')})",
+                            now_str
+                        ))
+                except Exception as e:
+                    logger.error(f"Error retornando stock al eliminar pedido: {e}")
+
     cursor.execute("DELETE FROM orders WHERE id = ?", (order_id,))
     conn.commit()
     conn.close()
@@ -557,6 +722,9 @@ def export_orders_df() -> pd.DataFrame:
         "CANT. ARTÍCULOS", "MONTO TOTAL ($)", "MÉTODO DE PAGO", "FECHA RETIRO",
         "HORA RETIRO", "ESTADO", "FUERA DE HORARIO", "RECORDATORIO ENVIADO", "FECHA REGISTRO", "OBSERVACIONES"
     ]
+    # Formatear fechas a Día/Mes/Año (DD/MM/AAAA)
+    df["FECHA RETIRO"] = df["FECHA RETIRO"].apply(lambda d: format_date_dmy(d) if pd.notnull(d) else "")
+    df["FECHA REGISTRO"] = df["FECHA REGISTRO"].apply(lambda d: format_datetime_dmy(d) if pd.notnull(d) else "")
     return df
 
 # ----------------- INVENTORY & KARDEX ADVANCED -----------------

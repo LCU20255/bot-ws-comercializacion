@@ -39,7 +39,23 @@ class NLUEngine:
             "name": None
         }
 
-        # 1. Check if user wants an advisor
+        # 1. Detección Inteligente de Inconformidad o Mensajes Negativos (Quejas, mal servicio, retraso)
+        negative_keywords = [
+            "mal servicio", "pésimo servicio", "pesimo servicio", "terrible", "horrible", "que porquería",
+            "que porqueria", "no sirve", "tardan mucho", "tardan demasiado", "demasiado lento", "lento",
+            "no responden", "no entiendo nada", "no entiendo", "está mal", "esta mal", "muy mal", "estafa",
+            "fraude", "engañan", "engaño", "desastre", "queja", "molesto", "molesta", "porqueria",
+            "no me gusta", "atención pésima", "atencion pesima", "mala atencion", "mala atención"
+        ]
+        if any(neg in lower_text for neg in negative_keywords):
+            return {
+                "intent": "NEGATIVE_SENTIMENT",
+                "matched_product": None,
+                "confidence": 0.98,
+                "extracted_data": extracted_data
+            }
+
+        # 2. Check if user wants an advisor
         advisor_keywords = ["asesor", "asesoria", "asesoría", "humano", "persona", "operador", "agente", "hablar con alguien", "duda", "dudas", "pregunta"]
         if any(w in lower_text for w in advisor_keywords) and current_state != "COLLECTING_DATA":
             return {
