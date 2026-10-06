@@ -147,13 +147,13 @@ def notify_waitlist_stock_available(product_id: int, product_name: str) -> int:
     y les envía el mensaje de aviso de reposición inmediata.
     """
     from app.database import get_pending_waitlist_for_product, mark_waitlist_notified
-    from datetime import datetime
+    from app.time_utils import now_vet
 
     pending = get_pending_waitlist_for_product(product_id, product_name)
     if not pending:
         return 0
 
-    now_hour = datetime.now().hour
+    now_hour = now_vet().hour
     greeting = "Buenas tardes" if 12 <= now_hour < 19 else ("Buenos días" if now_hour < 12 else "Buenas noches")
 
     count = 0

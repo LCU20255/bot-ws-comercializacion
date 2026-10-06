@@ -674,7 +674,75 @@
     </div>
   </div>
 
+  <!-- MODAL: CONVERTIR LISTA DE ESPERA A PEDIDO/CITA -->
+  <div class="modal" id="convert-waitlist-modal">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3><i class="bi bi-box-arrow-in-right"></i> Convertir en Pedido & Cita</h3>
+        <button class="modal-close" onclick="closeConvertWaitlistModal()">&times;</button>
+      </div>
+      <form id="convert-waitlist-form" onsubmit="submitConvertWaitlist(event)">
+        <input type="hidden" id="conv_waitlist_id">
+        <input type="hidden" id="conv_product_id">
+        <input type="hidden" id="conv_unit_price">
+        <div class="form-row">
+          <div class="form-group">
+            <label>Cliente (Nombre y Apellido) *</label>
+            <input type="text" id="conv_client_name" required>
+          </div>
+          <div class="form-group">
+            <label>Cédula de Identidad *</label>
+            <input type="text" id="conv_cedula" placeholder="V-12345678" required>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Teléfono de Contacto *</label>
+            <input type="text" id="conv_phone" required>
+          </div>
+          <div class="form-group">
+            <label>Producto Requerido</label>
+            <input type="text" id="conv_product_name" readonly style="background: #f8fafc; font-weight: 600;">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Cantidad Solicitada *</label>
+            <input type="number" id="conv_qty" min="1" value="1" required oninput="calcConvertTotal()">
+          </div>
+          <div class="form-group">
+            <label>Monto Total ($ Ref) *</label>
+            <input type="number" step="0.01" id="conv_amount_usd" required placeholder="0.00">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Fecha de Retiro (YYYY-MM-DD) *</label>
+            <input type="text" id="conv_pickup_date" required>
+          </div>
+          <div class="form-group">
+            <label>Hora de Retiro *</label>
+            <input type="text" id="conv_pickup_time" value="09:00 AM" required>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Método de Pago</label>
+          <select id="conv_payment_method">
+            <option value="EFECTIVO / DIVISAS">EFECTIVO / DIVISAS</option>
+            <option value="PAGO MÓVIL">PAGO MÓVIL</option>
+            <option value="TRANSFERENCIA BANCARIA">TRANSFERENCIA BANCARIA</option>
+            <option value="PUNTO DE VENTA EN SEDE">PUNTO DE VENTA EN SEDE</option>
+          </select>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeConvertWaitlistModal()">Cancelar</button>
+          <button type="submit" class="btn btn-primary" style="background: #166534;"><i class="bi bi-check-circle-fill"></i> Confirmar Pedido y Cita</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-  <script src="/static/js/admin.js?v=2"></script>
+  <script src="/static/js/admin.js?v=3"></script>
 </body>
 </html>

@@ -22,8 +22,10 @@ from app.database import (
     get_all_config, update_config, is_maintenance_active,
     get_inventory_movements, add_stock_batch, get_low_stock_products,
     get_available_catalog_products, get_financial_and_sales_metrics,
-    get_waitlist, mark_waitlist_notified
+    get_waitlist, mark_waitlist_notified, update_waitlist_item,
+    delete_waitlist_item, convert_waitlist_to_order, reset_database_to_virgin
 )
+from app.time_utils import now_vet, now_vet_str, now_vet_date_str
 from app.bot_flow import bot_manager, reset_session
 from app.bcv_service import bcv_service
 from app.whatsapp_service import notify_waitlist_stock_available, wa_service
@@ -245,13 +247,50 @@ async def api_upload_image(file: UploadFile = File(...)):
     images_dir = BASE_DIR / "app" / "static" / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
 
-    safe_filename = f"prod_{int(pd.Timestamp.now().timestamp())}_{file.filename.replace(' ', '_')}"
-    file_path = images_dir / safe_filename
+    timestamp = int(now_vet().timestamp())
+    raw_stem = Path(file.filename or "upload").stem
+    safe_stem = "".join([c if c.isalnum() or c in ("-", "_") else "_" for c in raw_stem])[:40]
 
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    try:
+        from PIL import Image, ImageOps
+        image = Image.open(file.file)
 
-    return {"status": "ok", "url": f"/static/images/{safe_filename}"}
+        # Corregir orientación basada en EXIF (fotos tomadas desde teléfonos móviles)
+        try:
+            image = ImageOps.exif_transpose(image)
+        except Exception:
+            pass
+
+        # Determinar formato óptimo manteniendo transparencias si existen
+        target_format = "JPEG"
+        ext = "jpg"
+        if image.mode in ("RGBA", "LA") or (image.mode == "P" and "transparency" in image.info):
+            target_format = "PNG"
+            ext = "png"
+        elif image.mode != "RGB":
+            image = image.convert("RGB")
+
+        # Redimensionar proporcionalmente a una resolución estándar máxima de 800x800
+        # Esto adapta cualquier imagen sin romper la interfaz ni las proporciones
+        image.thumbnail((800, 800), Image.Resampling.LANCZOS)
+
+        safe_filename = f"prod_{timestamp}_{safe_stem}.{ext}"
+        file_path = images_dir / safe_filename
+
+        if target_format == "JPEG":
+            image.save(file_path, format="JPEG", quality=85, optimize=True)
+        else:
+            image.save(file_path, format="PNG", optimize=True)
+
+        return {"status": "ok", "url": f"/static/images/{safe_filename}"}
+    except Exception as e:
+        logger.error(f"Error optimizando imagen con Pillow: {e}")
+        file.file.seek(0)
+        fallback_name = f"prod_{timestamp}_{safe_stem}_{uuid.uuid4().hex[:6]}.jpg"
+        file_path = images_dir / fallback_name
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        return {"status": "ok", "url": f"/static/images/{fallback_name}"}
 
 # ----------------- REST API: ORDERS / CITAS -----------------
 @app.get("/api/orders")
@@ -378,7 +417,7 @@ def api_export_excel():
             worksheet.set_column(idx, idx, min(max_len, 45))
 
     output.seek(0)
-    filename = f"pedidos_comercializacion_militar_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    filename = f"pedidos_sis_comer_{now_vet().strftime('%Y%m%d_%H%M')}.xlsx"
     headers = {'Content-Disposition': f'attachment; filename="{filename}"'}
     return StreamingResponse(output, media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', headers=headers)
 
@@ -388,7 +427,7 @@ def api_export_csv():
     output = io.StringIO()
     df.to_csv(output, index=False, encoding='utf-8-sig')
     output.seek(0)
-    filename = f"pedidos_comercializacion_militar_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.csv"
+    filename = f"pedidos_sis_comer_{now_vet().strftime('%Y%m%d_%H%M')}.csv"
     headers = {'Content-Disposition': f'attachment; filename="{filename}"'}
     return StreamingResponse(io.BytesIO(output.getvalue().encode('utf-8-sig')), media_type='text/csv', headers=headers)
 
@@ -488,9 +527,57 @@ def api_add_stock_batch(body: StockBatchSchema):
         raise HTTPException(status_code=400, detail=str(e))
 
 # ----------------- REST API: LISTA DE ESPERA (WAITLIST) -----------------
+class WaitlistUpdateSchema(BaseModel):
+    status: str
+    client_name: Optional[str] = None
+    phone: Optional[str] = None
+    notes: Optional[str] = None
+
+class WaitlistConvertSchema(BaseModel):
+    client_name: Optional[str] = None
+    phone: Optional[str] = None
+    cedula: Optional[str] = None
+    qty: Optional[int] = 1
+    total_amount: Optional[float] = 0.0
+    amount_ves: Optional[float] = 0.0
+    bcv_rate_applied: Optional[float] = 0.0
+    payment_method: Optional[str] = "EFECTIVO / DIVISAS"
+    pickup_date: Optional[str] = None
+    pickup_time: Optional[str] = "09:00 AM"
+    status: Optional[str] = "PENDIENTE POR ATENCIÓN"
+
 @app.get("/api/waitlist")
 def api_get_waitlist(status: Optional[str] = None):
     return get_waitlist(status=status)
+
+@app.put("/api/waitlist/{waitlist_id}")
+def api_update_waitlist(waitlist_id: int, body: WaitlistUpdateSchema):
+    update_waitlist_item(
+        waitlist_id=waitlist_id,
+        status=body.status,
+        notes=body.notes,
+        client_name=body.client_name,
+        phone=body.phone
+    )
+    return {"status": "ok", "message": f"Lista de espera #{waitlist_id} actualizada a {body.status.upper()}"}
+
+@app.delete("/api/waitlist/{waitlist_id}")
+def api_delete_waitlist(waitlist_id: int):
+    delete_waitlist_item(waitlist_id)
+    return {"status": "ok", "message": f"Registro #{waitlist_id} eliminado de la lista de espera"}
+
+@app.post("/api/waitlist/{waitlist_id}/convert-to-order")
+def api_convert_waitlist(waitlist_id: int, body: WaitlistConvertSchema):
+    try:
+        new_order = convert_waitlist_to_order(waitlist_id, body.dict())
+        return {
+            "status": "ok",
+            "message": f"Cliente convertido exitosamente en Pedido {new_order['ticket_code']}",
+            "order": new_order
+        }
+    except Exception as e:
+        logger.error(f"Error convirtiendo lista de espera #{waitlist_id} a pedido: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/waitlist/{waitlist_id}/notify")
 def api_notify_single_waitlist(waitlist_id: int):
@@ -503,8 +590,8 @@ def api_notify_single_waitlist(waitlist_id: int):
     prod_id = target.get("product_id")
     count = notify_waitlist_stock_available(prod_id or 0, prod_name)
     if count == 0 and target["status"] == "PENDIENTE":
-        # Forzar notificación individual directa
-        now_hour = datetime.now().hour
+        # Forzar notificación individual directa con hora legal de Venezuela
+        now_hour = now_vet().hour
         greeting = "Buenas tardes" if 12 <= now_hour < 19 else ("Buenos días" if now_hour < 12 else "Buenas noches")
         msg = (
             f"👋 ¡Hola, {target.get('client_name') or 'Cliente'}! {greeting}.\n\n"
@@ -515,6 +602,12 @@ def api_notify_single_waitlist(waitlist_id: int):
         wa_service.send_message_sync(target["phone"], msg)
         mark_waitlist_notified(waitlist_id)
     return {"status": "ok", "message": f"Notificación enviada al cliente {target['phone']}"}
+
+# ----------------- REST API: RESET SISTEMA VIRGEN -----------------
+@app.post("/api/system/reset-virgin")
+def api_reset_virgin():
+    reset_database_to_virgin()
+    return {"status": "ok", "message": "Sistema y bases de datos reseteados a estado 100% virgen"}
 
 # ----------------- REST API: BAILEYS QR & ESTADO -----------------
 class BaileysInternalStatus(BaseModel):

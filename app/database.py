@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 import pandas as pd
 from app.config import DATA_DIR, SUPABASE_URL, SUPABASE_KEY
+from app.time_utils import now_vet, now_vet_str, now_vet_date_str, now_vet_time_str
 
 logger = logging.getLogger(__name__)
 DB_FILE = DATA_DIR / "commercial_bot.db"
@@ -30,11 +31,11 @@ def init_db():
         price_display TEXT,
         category TEXT DEFAULT 'MILITAR',
         image_url TEXT,
-        stock INTEGER DEFAULT 100,
+        stock INTEGER DEFAULT 0,
         is_active INTEGER DEFAULT 1,
         requires_size INTEGER DEFAULT 0,
         keywords TEXT,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT (datetime('now', '-4 hours')),
         updated_by TEXT DEFAULT 'ADMIN'
     );
     """)
@@ -54,7 +55,7 @@ def init_db():
         name TEXT NOT NULL,
         cedula TEXT UNIQUE NOT NULL,
         phone TEXT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT (datetime('now', '-4 hours'))
     );
     """)
 
@@ -85,7 +86,7 @@ def init_db():
         is_off_hours INTEGER DEFAULT 0,    -- 1 si fue realizado fuera de horario laboral
         reminder_sent INTEGER DEFAULT 0,   -- 1 si ya se le envió recordatorio
         notes TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT (datetime('now', '-4 hours')),
         synced_to_supabase INTEGER DEFAULT 0
     );
     """)
@@ -121,7 +122,7 @@ def init_db():
         client_name TEXT,
         created_by TEXT DEFAULT 'SISTEMA',
         notes TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT (datetime('now', '-4 hours')),
         FOREIGN KEY(product_id) REFERENCES products(id)
     );
     """)
@@ -151,95 +152,25 @@ def init_db():
         client_name TEXT,
         product_id INTEGER,
         product_name TEXT NOT NULL,
-        status TEXT DEFAULT 'PENDIENTE', -- PENDIENTE, NOTIFICADO, CANCELADO
-        created_at TEXT NOT NULL,
+        status TEXT DEFAULT 'PENDIENTE', -- PENDIENTE, EN CONTACTO, NOTIFICADO, CANCELADO, CONVERTIDO EN PEDIDO
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT (datetime('now', '-4 hours')),
         notified_at TEXT,
         FOREIGN KEY (product_id) REFERENCES products (id) ON DELETE SET NULL
     );
     """)
 
+    for col, col_type in [("notes", "TEXT")]:
+        try:
+            cursor.execute(f"ALTER TABLE product_waitlist ADD COLUMN {col} {col_type}")
+            conn.commit()
+        except Exception:
+            pass
+
     conn.commit()
 
-    # Sembrar productos militares iniciales si está vacía
-    cursor.execute("SELECT COUNT(*) as count FROM products")
-    if cursor.fetchone()["count"] == 0:
-        military_products = [
-            (
-                "BARRAS Y PRESILLAS VENEZUELA RENACE",
-                "barras-presillas-venezuela-renace",
-                "Barras de condecoración militar Venezuela Renace y presillas de oro con acabado reglamentario para oficiales y tropas.",
-                18.0,
-                "18.00 Ref / Juego",
-                "CONDECORACIONES",
-                "/static/images/barras_venezuela.png",
-                150,
-                1,
-                0,
-                "barras, barra, venezuela renace, presillas, presillas de oro, condecoracion, barra militar, insignia",
-                "ADMIN"
-            ),
-            (
-                "UNIFORMES MILITARES Y TÁCTICOS",
-                "uniformes-militares-tacticos",
-                "Confección textil de alta resistencia: Uniformes patriotas, de campaña, faena militar y camisas corporativas con costuras reforzadas.",
-                35.0,
-                "35.00 Ref / Uniforme",
-                "TEXTIL & UNIFORMES",
-                "/static/images/uniformes_militares.png",
-                200,
-                1,
-                1,
-                "uniformes, uniforme militar, patriota, camuflaje, faena, ropa militar, uniforme tactico",
-                "ADMIN"
-            ),
-            (
-                "PARCHES BORDADOS E IDENTIFICADORES",
-                "parches-bordados-militares",
-                "Parches institucionales con hilo de alta definición: Escudos de unidades, jerarquías, grados militares y porta-nombres.",
-                5.0,
-                "5.00 Ref / Unidad",
-                "BORDADOS",
-                "/static/images/parches_militares.png",
-                500,
-                1,
-                0,
-                "parches, parche militar, bordados, identificadores, escudo, nombres militares, jerarquia",
-                "ADMIN"
-            ),
-            (
-                "BOTAS TÁCTICAS Y CALZADO MILITAR",
-                "botas-tacticas-militares",
-                "Botas de campaña en cuero legítimo y lona técnica, caña alta, suela antiresbalante de alto impacto.",
-                45.0,
-                "45.00 Ref / Par",
-                "CALZADO",
-                "/static/images/botas_tacticas.png",
-                120,
-                1,
-                1,
-                "botas, bota militar, botas tacticas, calzado militar, zapatos",
-                "ADMIN"
-            ),
-            (
-                "GORRAS Y BOINAS TÁCTICAS",
-                "gorras-boinas-tacticas",
-                "Gorras tácticas reglamentarias con velcro y bordado personalizado, boinas militares en paño fino.",
-                12.0,
-                "12.00 Ref / Unidad",
-                "ACCESORIOS",
-                "/static/images/gorras_boinas.png",
-                250,
-                1,
-                1,
-                "gorras, gorra, boina, boinas, quepe, boina militar, gorra bordada",
-                "ADMIN"
-            )
-        ]
-        cursor.executemany("""
-            INSERT INTO products (name, slug, description, price, price_display, category, image_url, stock, is_active, requires_size, keywords, updated_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, military_products)
-        conn.commit()
+    # NOTA: Sistema 100% virgen: No se precargan productos iniciales automáticos.
+    # El usuario administrará el catálogo desde el panel administrativo.
 
     # Configuraciones de Sistema por defecto
     default_config = {
@@ -306,10 +237,11 @@ def create_product(data: Dict[str, Any], updated_by: str = "ADMIN") -> int:
     price_display = data.get("price_display") or f"${price:.2f} Ref"
     category = str(data.get("category", "MILITAR")).strip().upper()
     requires_size = int(data.get("requires_size", 0))
+    current_time_vet = now_vet_str()
 
     cursor.execute("""
         INSERT INTO products (name, slug, description, price, price_display, category, image_url, stock, is_active, requires_size, keywords, updated_at, updated_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         name,
         slug,
@@ -322,6 +254,7 @@ def create_product(data: Dict[str, Any], updated_by: str = "ADMIN") -> int:
         int(data.get("is_active", 1)),
         requires_size,
         data.get("keywords", "").lower(),
+        current_time_vet,
         updated_by.upper()
     ))
     conn.commit()
@@ -337,10 +270,11 @@ def update_product(product_id: int, data: Dict[str, Any], updated_by: str = "ADM
     price_display = data.get("price_display") or f"${price:.2f} Ref"
     category = str(data.get("category", "MILITAR")).strip().upper()
     requires_size = int(data.get("requires_size", 0))
+    current_time_vet = now_vet_str()
 
     cursor.execute("""
         UPDATE products
-        SET name = ?, description = ?, price = ?, price_display = ?, category = ?, image_url = ?, stock = ?, is_active = ?, requires_size = ?, keywords = ?, updated_at = CURRENT_TIMESTAMP, updated_by = ?
+        SET name = ?, description = ?, price = ?, price_display = ?, category = ?, image_url = ?, stock = ?, is_active = ?, requires_size = ?, keywords = ?, updated_at = ?, updated_by = ?
         WHERE id = ?
     """, (
         name,
@@ -353,6 +287,7 @@ def update_product(product_id: int, data: Dict[str, Any], updated_by: str = "ADM
         int(data.get("is_active", 1)),
         requires_size,
         data.get("keywords", "").lower(),
+        current_time_vet,
         updated_by.upper(),
         product_id
     ))
@@ -382,7 +317,7 @@ def upsert_client(name: str, cedula: str, phone: str) -> int:
         cursor.execute("UPDATE clients SET name = ?, phone = ? WHERE id = ?", (clean_name, clean_phone, row["id"]))
         client_id = row["id"]
     else:
-        cursor.execute("INSERT INTO clients (name, cedula, phone) VALUES (?, ?, ?)", (clean_name, clean_cedula, clean_phone))
+        cursor.execute("INSERT INTO clients (name, cedula, phone, created_at) VALUES (?, ?, ?, ?)", (clean_name, clean_cedula, clean_phone, now_vet_str()))
         client_id = cursor.lastrowid
 
     conn.commit()
@@ -394,9 +329,9 @@ def create_order(data: Dict[str, Any]) -> Dict[str, Any]:
     conn = get_connection()
     cursor = conn.cursor()
 
-    # Formato de Ticket exacto pedido por el usuario: CIT-YYMMDD-XXX
-    now = datetime.now()
-    date_code = now.strftime('%y%m%d')
+    # Formato de Ticket exacto: CIT-YYMMDD-XXX con hora exacta legal de Venezuela
+    vet_now = now_vet()
+    date_code = vet_now.strftime('%y%m%d')
     cursor.execute("SELECT ticket_code FROM orders WHERE ticket_code LIKE ?", (f"CIT-{date_code}-%",))
     existing_codes = {r[0] for r in cursor.fetchall()}
     idx = len(existing_codes) + 1
@@ -422,11 +357,12 @@ def create_order(data: Dict[str, Any]) -> Dict[str, Any]:
     amount_usd = float(data.get("amount_usd", total_amount))
     amount_ves = float(data.get("amount_ves", 0.0))
     bcv_rate_applied = float(data.get("bcv_rate_applied", 0.0))
-    bcv_rate_date = str(data.get("bcv_rate_date", now.strftime('%Y-%m-%d')))
+    bcv_rate_date = str(data.get("bcv_rate_date", now_vet_date_str()))
     receipt_ref = data.get("receipt_ref")
     receipt_bank = data.get("receipt_bank")
     receipt_date = data.get("receipt_date")
     ocr_raw_text = data.get("ocr_raw_text")
+    created_at_vet = now_vet_str()
 
     cursor.execute("""
         INSERT INTO orders (
@@ -434,9 +370,9 @@ def create_order(data: Dict[str, Any]) -> Dict[str, Any]:
             items_summary, items_detail, total_items, total_amount,
             amount_usd, amount_ves, bcv_rate_applied, bcv_rate_date,
             payment_method, receipt_ref, receipt_bank, receipt_date, ocr_raw_text,
-            pickup_date, pickup_time, status, is_off_hours, notes
+            pickup_date, pickup_time, status, is_off_hours, notes, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         ticket_code, client_name, cedula, phone,
         items_summary, items_detail_json,
@@ -444,11 +380,12 @@ def create_order(data: Dict[str, Any]) -> Dict[str, Any]:
         total_amount,
         amount_usd, amount_ves, bcv_rate_applied, bcv_rate_date,
         payment_method, receipt_ref, receipt_bank, receipt_date, ocr_raw_text,
-        data.get("pickup_date", now.strftime('%Y-%m-%d')),
+        data.get("pickup_date", now_vet_date_str()),
         data.get("pickup_time", "09:00 AM"),
         status,
         int(data.get("is_off_hours", 0)),
-        data.get("notes", "")
+        data.get("notes", ""),
+        created_at_vet
     ))
     conn.commit()
     order_id = cursor.lastrowid
@@ -465,17 +402,18 @@ def create_order(data: Dict[str, Any]) -> Dict[str, Any]:
                     if prow:
                         prev_stock = prow["stock"]
                         new_stock = max(0, prev_stock - qty)
-                        cursor.execute("UPDATE products SET stock = ? WHERE id = ?", (new_stock, prod_id))
+                        cursor.execute("UPDATE products SET stock = ?, updated_at = ? WHERE id = ?", (new_stock, created_at_vet, prod_id))
                         cursor.execute("""
                             INSERT INTO inventory_movements (
                                 product_id, movement_type, quantity, previous_stock,
-                                new_stock, order_id, client_name, created_by, notes
+                                new_stock, order_id, client_name, created_by, notes, created_at
                             )
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """, (
                             prod_id, "SALIDA_VENTA", -qty, prev_stock,
                             new_stock, order_id, client_name, "BOT_VENTAS",
-                            f"Venta con ticket {ticket_code}"
+                            f"Venta con ticket {ticket_code}",
+                            created_at_vet
                         ))
                         conn.commit()
                 except Exception as e:
@@ -586,7 +524,7 @@ def is_maintenance_active() -> bool:
     return config.get("maintenance_mode", "0") == "1"
 
 def is_within_business_hours() -> bool:
-    """Verifica si la hora actual está dentro del horario laboral (ej: 08:00 a 17:00)"""
+    """Verifica si la hora actual está dentro del horario laboral (ej: 08:00 a 17:00) en hora de Venezuela"""
     config = get_all_config()
     start_str = config.get("business_hours_start", "08:00")
     end_str = config.get("business_hours_end", "17:00")
@@ -597,7 +535,7 @@ def is_within_business_hours() -> bool:
         start_time = time(sh, sm)
         end_time = time(eh, em)
 
-        now_time = datetime.now().time()
+        now_time = now_vet().time()
         return start_time <= now_time <= end_time
     except Exception:
         return True
@@ -649,7 +587,7 @@ def get_low_stock_products(threshold: int = 20) -> List[Dict[str, Any]]:
     return rows
 
 def add_stock_batch(product_id: int, quantity: int, notes: str = "", created_by: str = "TALLER_CONFECCION") -> Dict[str, Any]:
-    """Ingreso de lote terminado de confección al inventario con registro en Kardex"""
+    """Ingreso de lote terminado de confección al inventario con registro en Kardex en hora de Venezuela"""
     if quantity <= 0:
         raise ValueError("La cantidad debe ser mayor a 0")
         
@@ -663,13 +601,14 @@ def add_stock_batch(product_id: int, quantity: int, notes: str = "", created_by:
         
     prev_stock = row["stock"]
     new_stock = prev_stock + quantity
-    cursor.execute("UPDATE products SET stock = ?, updated_at = CURRENT_TIMESTAMP, updated_by = ? WHERE id = ?", (new_stock, created_by, product_id))
+    current_time_vet = now_vet_str()
+    cursor.execute("UPDATE products SET stock = ?, updated_at = ?, updated_by = ? WHERE id = ?", (new_stock, current_time_vet, created_by, product_id))
     
     cursor.execute("""
         INSERT INTO inventory_movements (
-            product_id, movement_type, quantity, previous_stock, new_stock, created_by, notes
-        ) VALUES (?, 'ENTRADA_TALLER', ?, ?, ?, ?, ?)
-    """, (product_id, quantity, prev_stock, new_stock, created_by, notes or "Ingreso de lote al inventario"))
+            product_id, movement_type, quantity, previous_stock, new_stock, created_by, notes, created_at
+        ) VALUES (?, 'ENTRADA_TALLER', ?, ?, ?, ?, ?, ?)
+    """, (product_id, quantity, prev_stock, new_stock, created_by, notes or "Ingreso de lote al inventario", current_time_vet))
     conn.commit()
     conn.close()
     return {"product_id": product_id, "name": row["name"], "previous_stock": prev_stock, "new_stock": new_stock}
@@ -705,8 +644,8 @@ def get_financial_and_sales_metrics() -> Dict[str, Any]:
     """)
     totals = dict(cursor.fetchone())
     
-    # Ventas de hoy
-    today_str = datetime.now().strftime('%Y-%m-%d')
+    # Ventas de hoy en hora oficial de Venezuela
+    today_str = now_vet_date_str()
     cursor.execute("""
         SELECT 
             COUNT(*) as today_orders,
@@ -755,15 +694,15 @@ get_appointments = get_orders
 export_appointments_df = export_orders_df
 
 # ----------------- PRODUCT WAITLIST (LISTA DE ESPERA POR STOCK) -----------------
-def add_to_waitlist(phone: str, client_name: str, product_name: str, product_id: Optional[int] = None) -> int:
+def add_to_waitlist(phone: str, client_name: str, product_name: str, product_id: Optional[int] = None, notes: str = "") -> int:
     """Registra a un cliente en lista de espera cuando un producto no tiene stock disponible"""
     conn = get_connection()
     cursor = conn.cursor()
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now_str = now_vet_str()
     cursor.execute("""
-        INSERT INTO product_waitlist (phone, client_name, product_id, product_name, status, created_at)
-        VALUES (?, ?, ?, ?, 'PENDIENTE', ?)
-    """, (phone, client_name, product_id, product_name, now_str))
+        INSERT INTO product_waitlist (phone, client_name, product_id, product_name, status, notes, created_at)
+        VALUES (?, ?, ?, ?, 'PENDIENTE', ?, ?)
+    """, (phone, client_name.strip().upper() if client_name else "CLIENTE", product_id, product_name.strip().upper(), notes, now_str))
     waitlist_id = cursor.lastrowid
     conn.commit()
     conn.close()
@@ -774,7 +713,7 @@ def get_waitlist(status: Optional[str] = None) -> List[Dict[str, Any]]:
     conn = get_connection()
     cursor = conn.cursor()
     if status:
-        cursor.execute("SELECT * FROM product_waitlist WHERE status = ? ORDER BY id DESC", (status,))
+        cursor.execute("SELECT * FROM product_waitlist WHERE status = ? ORDER BY id DESC", (status.strip().upper(),))
     else:
         cursor.execute("SELECT * FROM product_waitlist ORDER BY id DESC")
     rows = cursor.fetchall()
@@ -804,13 +743,140 @@ def get_pending_waitlist_for_product(product_id: Optional[int], product_name: Op
     return [dict(r) for r in rows]
 
 def mark_waitlist_notified(waitlist_id: int):
-    """Marca un registro de lista de espera como ya notificado con fecha y hora"""
+    """Marca un registro de lista de espera como ya notificado con fecha y hora de Venezuela"""
     conn = get_connection()
     cursor = conn.cursor()
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now_str = now_vet_str()
     cursor.execute("UPDATE product_waitlist SET status = 'NOTIFICADO', notified_at = ? WHERE id = ?", (now_str, waitlist_id))
     conn.commit()
     conn.close()
+
+def update_waitlist_item(waitlist_id: int, status: str, notes: Optional[str] = None, client_name: Optional[str] = None, phone: Optional[str] = None) -> bool:
+    """Permite al administrador modificar el estatus y datos del cliente en lista de espera"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    fields = ["status = ?"]
+    params = [status.strip().upper()]
+    if client_name is not None:
+        fields.append("client_name = ?")
+        params.append(client_name.strip().upper())
+    if phone is not None:
+        fields.append("phone = ?")
+        params.append(phone.strip())
+    if notes is not None:
+        fields.append("notes = ?")
+        params.append(notes.strip())
+    params.append(waitlist_id)
+    cursor.execute(f"UPDATE product_waitlist SET {', '.join(fields)} WHERE id = ?", tuple(params))
+    conn.commit()
+    conn.close()
+    return True
+
+def delete_waitlist_item(waitlist_id: int) -> bool:
+    """Elimina un registro de la lista de espera"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM product_waitlist WHERE id = ?", (waitlist_id,))
+    conn.commit()
+    conn.close()
+    return True
+
+def convert_waitlist_to_order(waitlist_id: int, order_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Convierte una persona en lista de espera directamente a un cliente en pedidos y citas.
+    Crea la orden en la tabla orders y actualiza el registro en la lista de espera como 'CONVERTIDO EN PEDIDO'.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM product_waitlist WHERE id = ?", (waitlist_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        raise ValueError(f"Registro en lista de espera #{waitlist_id} no encontrado")
+    
+    waitlist_item = dict(row)
+    
+    # Completar datos con los de la lista de espera si no vienen en order_data
+    client_name = order_data.get("client_name") or waitlist_item.get("client_name") or "CLIENTE GENERAL"
+    phone = order_data.get("phone") or waitlist_item.get("phone")
+    cedula = order_data.get("cedula") or "S/C"
+    
+    prod_name = waitlist_item.get("product_name") or "PRODUCTO"
+    prod_id = waitlist_item.get("product_id")
+    qty = int(order_data.get("qty", 1))
+    
+    # Obtener precio del producto si no viene en order_data
+    price = float(order_data.get("total_amount", 0.0))
+    if price <= 0 and prod_id:
+        cursor.execute("SELECT price FROM products WHERE id = ?", (prod_id,))
+        prow = cursor.fetchone()
+        if prow:
+            price = float(prow["price"]) * qty
+
+    items_detail = order_data.get("items_detail") or [
+        {"id": prod_id, "name": prod_name, "qty": qty, "unit_price": price / qty if qty > 0 else price, "subtotal": price}
+    ]
+    items_summary = order_data.get("items_summary") or f"{qty}X {prod_name}"
+
+    order_payload = {
+        "client_name": client_name,
+        "cedula": cedula,
+        "phone": phone,
+        "items_summary": items_summary,
+        "items_detail": items_detail,
+        "total_items": qty,
+        "total_amount": price,
+        "amount_usd": price,
+        "amount_ves": float(order_data.get("amount_ves", 0.0)),
+        "bcv_rate_applied": float(order_data.get("bcv_rate_applied", 0.0)),
+        "bcv_rate_date": order_data.get("bcv_rate_date", now_vet_date_str()),
+        "payment_method": order_data.get("payment_method", "EFECTIVO / DIVISAS"),
+        "pickup_date": order_data.get("pickup_date", now_vet_date_str()),
+        "pickup_time": order_data.get("pickup_time", "09:00 AM"),
+        "status": order_data.get("status", "PENDIENTE POR ATENCIÓN"),
+        "notes": f"Convertido desde Lista de Espera #{waitlist_id}"
+    }
+    
+    # Crear la orden oficial
+    new_order = create_order(order_payload)
+    
+    # Marcar waitlist como CONVERTIDO EN PEDIDO
+    now_str = now_vet_str()
+    cursor.execute("""
+        UPDATE product_waitlist 
+        SET status = 'CONVERTIDO EN PEDIDO', notified_at = ? 
+        WHERE id = ?
+    """, (now_str, waitlist_id))
+    conn.commit()
+    conn.close()
+    
+    return new_order
+
+# ----------------- RESET SISTEMA A ESTADO VIRGEN -----------------
+def reset_database_to_virgin():
+    """
+    Limpia completamente las tablas de datos para dejar el sistema 100% virgen para su primer uso real:
+    - Vence pedidos y citas (orders)
+    - Limpia movimientos kardex (inventory_movements)
+    - Limpia lista de espera (product_waitlist)
+    - Limpia catálogo de productos (products)
+    - Limpia clientes (clients)
+    Conserva las configuraciones del sistema (system_config) y el histórico de tasas BCV (bcv_rates).
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM orders")
+    cursor.execute("DELETE FROM inventory_movements")
+    cursor.execute("DELETE FROM product_waitlist")
+    cursor.execute("DELETE FROM products")
+    cursor.execute("DELETE FROM clients")
+    try:
+        cursor.execute("DELETE FROM sqlite_sequence WHERE name IN ('orders', 'inventory_movements', 'product_waitlist', 'products', 'clients')")
+    except Exception:
+        pass
+    conn.commit()
+    conn.close()
+    logger.info("Base de datos de SIS-COMER reseteada a estado VIRGEN (sin registros previos)")
 
 
 

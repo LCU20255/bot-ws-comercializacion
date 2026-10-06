@@ -19,6 +19,8 @@ from app.database import (
     add_to_waitlist
 )
 
+from app.time_utils import now_vet, now_vet_date_str, now_vet_str
+
 logger = logging.getLogger(__name__)
 
 # Memoria de sesiones de usuario activas
@@ -44,7 +46,7 @@ def get_session(phone: str) -> Dict[str, Any]:
             "pickup_time": None,       # HH:MM AM/PM
             "payment_method": "PAGO MÓVIL / TRANSFERENCIA",
             "is_off_hours": 0,
-            "last_interaction": datetime.now()
+            "last_interaction": now_vet()
         }
     return user_sessions[phone]
 
@@ -519,12 +521,12 @@ class BotFlowManager:
         cart = session["cart"]
         total_usd = sum(item["subtotal"] for item in cart)
         
-        p_date = receipt_data.get("payment_date") or datetime.now().strftime("%Y-%m-%d")
+        p_date = receipt_data.get("payment_date") or now_vet_date_str()
         # CONSULTAR TASA BCV HISTÓRICA DE LA FECHA DE PAGO (si fue ayer, BCV de ayer)
         bcv_rate = bcv_service.get_rate_for_date(p_date)
         total_ves = total_usd * bcv_rate
 
-        ref = receipt_data.get("reference") or "REC-" + datetime.now().strftime("%H%M%S")
+        ref = receipt_data.get("reference") or "REC-" + now_vet().strftime("%H%M%S")
         bank = receipt_data.get("bank") or "BANCO VENEZOLANO"
         
         session["receipt_ref"] = str(ref).strip()

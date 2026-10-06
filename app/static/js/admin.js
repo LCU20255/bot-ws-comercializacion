@@ -189,6 +189,7 @@ function renderOrders(data) {
       <tr onclick="openOrderDetail(${item.id})" class="order-row" style="cursor: pointer;">
         <td>
           <span class="ticket-tag">${item.ticket_code}</span>
+          ${item.created_at ? `<br><small class="text-muted" style="font-size: 0.72rem; white-space: nowrap;"><i class="bi bi-clock-history"></i> ${item.created_at}</small>` : ''}
         </td>
         <td>
           <strong style="color: #0f172a; font-size: 0.9rem;">${item.client_name}</strong>
@@ -331,6 +332,10 @@ function openOrderDetail(orderId) {
       <div>
         <small class="text-muted" style="display: block; font-weight: 600;">TELÉFONO DE CONTACTO</small>
         <span style="font-size: 0.95rem; font-weight: 700; color: #0284c7;"><i class="bi bi-telephone-fill"></i> ${order.phone}</span>
+      </div>
+      <div>
+        <small class="text-muted" style="display: block; font-weight: 600;">FECHA DE REGISTRO</small>
+        <span style="font-size: 0.88rem; color: #334155; font-weight: 600;"><i class="bi bi-clock-history"></i> ${order.created_at || '-'}</span>
       </div>
       <div>
         <small class="text-muted" style="display: block; font-weight: 600;">ESTADO DE ATENCIÓN</small>
@@ -528,29 +533,88 @@ async function loadWaitlist() {
       return;
     }
     tbody.innerHTML = list.map(item => {
-      const isPending = item.status === "PENDIENTE";
-      const statusBadge = isPending 
-        ? `<span class="badge" style="background: #fef3c7; color: #b45309; padding: 4px 10px; border-radius: 6px; font-weight: 700;">PENDIENTE</span>`
-        : `<span class="badge" style="background: #dcfce7; color: #15803d; padding: 4px 10px; border-radius: 6px; font-weight: 700;">NOTIFICADO</span>`;
-      
-      const actionBtn = isPending
-        ? `<button class="btn btn-sm btn-primary" onclick="notifyWaitlistEntry(${item.id})"><i class="bi bi-send-fill"></i> Notificar Ahora</button>`
-        : `<small class="text-muted"><i class="bi bi-check2-all" style="color: #16a34a;"></i> ${item.notified_at || 'Avisado'}</small>`;
+      const status = (item.status || "PENDIENTE").toUpperCase();
+      let badgeStyle = "background: #fef3c7; color: #b45309; border: 1px solid #fde68a;";
+      if (status === "EN CONTACTO") badgeStyle = "background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd;";
+      else if (status === "NOTIFICADO") badgeStyle = "background: #dcfce7; color: #15803d; border: 1px solid #86efac;";
+      else if (status === "CANCELADO") badgeStyle = "background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5;";
+      else if (status === "CONVERTIDO EN PEDIDO") badgeStyle = "background: #f3e8ff; color: #7e22ce; border: 1px solid #d8b4fe;";
+
+      const cleanPhone = (item.phone || "").replace(/\D/g, "");
+      const waLink = `https://wa.me/${cleanPhone}`;
 
       return `
         <tr>
-          <td><code style="color: #64748b;">#${item.id}</code></td>
-          <td><small>${item.created_at}</small></td>
+          <td><code style="color: #64748b; font-weight: 700;">#${item.id}</code></td>
+          <td><small style="color: #475569; font-weight: 500;"><i class="bi bi-clock-history text-muted"></i> ${item.created_at || '-'}</small></td>
           <td><strong>${item.client_name || 'CLIENTE'}</strong></td>
-          <td><code>${item.phone}</code></td>
-          <td><span style="font-weight: 600; color: #0f172a;">${item.product_name}</span></td>
-          <td>${statusBadge}</td>
-          <td>${actionBtn}</td>
+          <td>
+            <a href="${waLink}" target="_blank" style="color: #0284c7; text-decoration: none; font-weight: 600; display: inline-flex; align-items: center; gap: 4px;">
+              <i class="bi bi-whatsapp" style="color: #16a34a;"></i> ${item.phone}
+            </a>
+          </td>
+          <td><span style="font-weight: 700; color: #0f172a;">${item.product_name}</span></td>
+          <td>
+            <select style="padding: 4px 8px; font-size: 0.75rem; font-weight: 700; border-radius: 6px; cursor: pointer; ${badgeStyle}" onchange="changeWaitlistStatus(${item.id}, this.value)">
+              <option value="PENDIENTE" ${status === 'PENDIENTE' ? 'selected' : ''}>PENDIENTE</option>
+              <option value="EN CONTACTO" ${status === 'EN CONTACTO' ? 'selected' : ''}>EN CONTACTO</option>
+              <option value="NOTIFICADO" ${status === 'NOTIFICADO' ? 'selected' : ''}>NOTIFICADO</option>
+              <option value="CANCELADO" ${status === 'CANCELADO' ? 'selected' : ''}>CANCELADO</option>
+              <option value="CONVERTIDO EN PEDIDO" ${status === 'CONVERTIDO EN PEDIDO' ? 'selected' : ''}>CONVERTIDO EN PEDIDO</option>
+            </select>
+          </td>
+          <td>
+            <div style="display: flex; gap: 6px; align-items: center;">
+              ${status !== 'CONVERTIDO EN PEDIDO' ? `
+                <button class="btn btn-sm btn-primary" onclick="openConvertWaitlistModal(${item.id})" style="font-size: 0.75rem; padding: 4px 9px; white-space: nowrap; background: #166534; border-color: #14532d;">
+                  <i class="bi bi-box-arrow-in-right"></i> Convertir a Pedido
+                </button>
+              ` : `
+                <span class="badge" style="background: #f3e8ff; color: #7e22ce; font-size: 0.72rem; padding: 4px 8px; border-radius: 4px; font-weight: 700;"><i class="bi bi-check2-all"></i> Pedido Creado</span>
+              `}
+              <button class="btn btn-icon btn-sm" onclick="notifyWaitlistEntry(${item.id})" title="Enviar WhatsApp Notificación"><i class="bi bi-send-fill" style="color: #0284c7;"></i></button>
+              <button class="btn btn-icon btn-sm text-danger" onclick="deleteWaitlistEntry(${item.id})" title="Eliminar"><i class="bi bi-trash3"></i></button>
+            </div>
+          </td>
         </tr>
       `;
     }).join("");
   } catch (err) {
     console.error("Error cargando lista de espera:", err);
+  }
+}
+
+async function changeWaitlistStatus(id, newStatus) {
+  try {
+    const res = await fetch(`/api/waitlist/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: newStatus })
+    });
+    if (res.ok) {
+      notifySuccess("Estado Actualizado", `Lista de espera #${id} cambiada a ${newStatus}`);
+      loadWaitlist();
+    } else {
+      notifyError("Error", "No se pudo actualizar el estado.");
+    }
+  } catch (err) {
+    notifyError("Error", "Error de red al actualizar estado.");
+  }
+}
+
+async function deleteWaitlistEntry(id) {
+  const ok = await confirmAction("¿Eliminar registro?", "Se quitará a este cliente de la lista de espera.", "Eliminar", true);
+  if (!ok) return;
+  try {
+    const res = await fetch(`/api/waitlist/${id}`, { method: "DELETE" });
+    if (res.ok) {
+      notifySuccess("Eliminado", "Registro quitado de la lista de espera.");
+      loadWaitlist();
+    } else {
+      notifyError("Error", "No se pudo eliminar.");
+    }
+  } catch (err) {
+    notifyError("Error", "Error de red al eliminar.");
   }
 }
 
@@ -566,6 +630,120 @@ async function notifyWaitlistEntry(id) {
     }
   } catch (err) {
     notifyError("Error", "Error de red al notificar al cliente");
+  }
+}
+
+let currentWaitlistConvertItem = null;
+
+async function openConvertWaitlistModal(id) {
+  try {
+    const res = await fetch("/api/waitlist");
+    const list = await res.json();
+    const item = list.find(w => w.id === id);
+    if (!item) return;
+
+    currentWaitlistConvertItem = item;
+    document.getElementById("conv_waitlist_id").value = item.id;
+    document.getElementById("conv_client_name").value = item.client_name || "";
+    document.getElementById("conv_phone").value = item.phone || "";
+    document.getElementById("conv_cedula").value = "V-";
+    document.getElementById("conv_product_name").value = item.product_name;
+    document.getElementById("conv_product_id").value = item.product_id || "";
+    document.getElementById("conv_qty").value = 1;
+
+    let unitPrice = 0;
+    if (products && products.length > 0) {
+      const p = products.find(prod => prod.id === item.product_id || prod.name.toUpperCase() === item.product_name.toUpperCase());
+      if (p) unitPrice = parseFloat(p.price || 0);
+    }
+    document.getElementById("conv_unit_price").value = unitPrice;
+    document.getElementById("conv_amount_usd").value = unitPrice > 0 ? unitPrice.toFixed(2) : "0.00";
+
+    const todayStr = new Date().toISOString().split("T")[0];
+    document.getElementById("conv_pickup_date").value = todayStr;
+    document.getElementById("conv_pickup_time").value = "09:00 AM";
+
+    document.getElementById("convert-waitlist-modal").classList.add("show");
+  } catch (err) {
+    notifyError("Error", "No se pudo abrir el convertidor.");
+  }
+}
+
+function closeConvertWaitlistModal() {
+  const modal = document.getElementById("convert-waitlist-modal");
+  if (modal) modal.classList.remove("show");
+  currentWaitlistConvertItem = null;
+}
+
+function calcConvertTotal() {
+  const qty = parseInt(document.getElementById("conv_qty").value) || 1;
+  const unitPrice = parseFloat(document.getElementById("conv_unit_price").value) || 0;
+  if (unitPrice > 0) {
+    document.getElementById("conv_amount_usd").value = (qty * unitPrice).toFixed(2);
+  }
+}
+
+async function submitConvertWaitlist(e) {
+  e.preventDefault();
+  const waitlistId = parseInt(document.getElementById("conv_waitlist_id").value);
+  const payload = {
+    client_name: document.getElementById("conv_client_name").value.trim().toUpperCase(),
+    cedula: document.getElementById("conv_cedula").value.trim().toUpperCase(),
+    phone: document.getElementById("conv_phone").value.trim(),
+    qty: parseInt(document.getElementById("conv_qty").value) || 1,
+    total_amount: parseFloat(document.getElementById("conv_amount_usd").value) || 0,
+    payment_method: document.getElementById("conv_payment_method").value,
+    pickup_date: document.getElementById("conv_pickup_date").value,
+    pickup_time: document.getElementById("conv_pickup_time").value,
+    status: "PENDIENTE POR ATENCIÓN"
+  };
+
+  try {
+    const res = await fetch(`/api/waitlist/${waitlistId}/convert-to-order`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (res.ok) {
+      closeConvertWaitlistModal();
+      notifySuccess("¡Convertido a Pedido!", data.message || "Pedido creado exitosamente.");
+      loadWaitlist();
+      loadOrders();
+      loadInventoryKardex();
+    } else {
+      notifyError("Error", data.detail || "No se pudo convertir.");
+    }
+  } catch (err) {
+    notifyError("Error", "Error de red al convertir a pedido.");
+  }
+}
+
+async function resetSystemToVirgin() {
+  const ok = await confirmAction(
+    "¿Resetear TODO a Estado Virgen?",
+    "Esta acción BORRARÁ todos los pedidos, citas, movimientos de Kardex, lista de espera, catálogo y clientes de prueba. El sistema quedará 100% virgen para su primer uso real.",
+    "Sí, Resetear Todo",
+    true
+  );
+  if (!ok) return;
+
+  try {
+    const res = await fetch("/api/system/reset-virgin", { method: "POST" });
+    const data = await res.json();
+    if (res.ok) {
+      notifySuccess("Sistema Virgen", "Todas las tablas han sido reseteadas a estado virgen.");
+      loadOrders();
+      loadProducts();
+      loadInventoryKardex();
+      loadWaitlist();
+      loadFinancialMetrics();
+      loadLowStockAlerts();
+    } else {
+      notifyError("Error", data.detail || "No se pudo resetear el sistema.");
+    }
+  } catch (err) {
+    notifyError("Error", "Error de comunicación con el servidor.");
   }
 }
 
