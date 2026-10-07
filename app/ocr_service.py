@@ -43,6 +43,11 @@ MONTHS_ES = {
     "JUL": 7, "JULIO": 7, "AGO": 8, "AGOSTO": 8, "SEP": 9, "SEPT": 9, "SEPTIEMBRE": 9,
     "SETIEMBRE": 9, "OCT": 10, "OCTUBRE": 10, "NOV": 11, "NOVIEMBRE": 11,
     "DIC": 12, "DICIEMBRE": 12,
+    "ene": 1, "enero": 1, "feb": 2, "febrero": 2, "mar": 3, "marzo": 3,
+    "abr": 4, "abril": 4, "may": 5, "mayo": 5, "jun": 6, "junio": 6,
+    "jul": 7, "julio": 7, "ago": 8, "agosto": 8, "sep": 9, "sept": 9, "septiembre": 9,
+    "setiembre": 9, "oct": 10, "octubre": 10, "nov": 11, "noviembre": 11,
+    "dic": 12, "diciembre": 12,
 }
 
 # Palabras clave que identifican la línea del número de referencia (por prioridad)
@@ -129,11 +134,13 @@ class ReceiptOCRService:
                 return datetime(int(y), int(mo), int(d)).strftime("%Y-%m-%d")
             except ValueError:
                 pass
-        # 06 de octubre de 2026 / 06 OCT 2026 / 06-OCT-2026
-        m = re.search(r'\b([0-3]?\d)\s*(?:DE\s+|[\-/\s])\s*([A-Z]{3,10})\.?\s*(?:DE\s+|[\-/\s])\s*((?:20)?\d{2})\b', text)
+        # 06 de octubre de 2026 / 06 OCT 2026 / 06-OCT-2026 (insensible a mayúsculas/minúsculas)
+        norm = _strip_accents(text).lower()
+        m = re.search(r'\b([0-3]?\d)\s*(?:de\s+|[\-/\s])\s*([a-zA-Z]{3,12})\.?\s*(?:de\s+|[\-/\s])\s*((?:20)?\d{2})\b', norm, re.IGNORECASE)
         if m:
             d, mon, y = m.groups()
-            month = MONTHS_ES.get(mon) or MONTHS_ES.get(mon[:3])
+            mon_lower = mon.lower()
+            month = MONTHS_ES.get(mon_lower) or MONTHS_ES.get(mon_lower[:3])
             if month:
                 if len(y) == 2:
                     y = "20" + y
@@ -144,34 +151,44 @@ class ReceiptOCRService:
         return None
 
     # ------------------------------------------------------------------
-    # PARSEO DE REFERENCIA
+    # PARSEO DE REFERENCIA (Insensible a mayúsculas/minúsculas)
     # ------------------------------------------------------------------
     @staticmethod
     def _extract_reference(lines: List[str]) -> Optional[str]:
-        # 1) Línea con palabra clave de referencia; valor en la misma línea o la siguiente
+        clean_lines = [_strip_accents(l) for l in lines]
+
+        # 1) Búsqueda por palabras clave explícitas
         for kw in REF_KEYWORDS:
-            for i, line in enumerate(lines):
-                if re.search(r'(?<![A-Z])' + re.escape(kw) + r'(?![A-Z])', line):
-                    after = line.split(kw, 1)[1] if kw in line else line
+            kw_clean = _strip_accents(kw).lower()
+            pattern = r'(?<![a-zA-Z0-9])' + re.escape(kw_clean) + r'(?![a-zA-Z0-9])'
+            for i, raw_line in enumerate(clean_lines):
+                line_low = raw_line.lower()
+                if re.search(pattern, line_low, re.IGNORECASE):
+                    # Extraer dígitos posteriores en la misma línea
+                    after_parts = re.split(pattern, line_low, maxsplit=1, flags=re.IGNORECASE)
+                    after = after_parts[1] if len(after_parts) > 1 else line_low
                     m = re.search(r'([0-9][0-9\s\-]{3,24}[0-9])', after)
                     if m:
                         digits = re.sub(r'\D', '', m.group(1))
                         if 4 <= len(digits) <= 20:
                             return digits
-                    if i + 1 < len(lines):
-                        nxt = lines[i + 1]
-                        if not any(nk in nxt for nk in NON_REF_KEYWORDS):
-                            m = re.search(r'^\s*[#:\-]?\s*([0-9][0-9\s\-]{3,24}[0-9])\s*$', nxt)
-                            if m:
-                                digits = re.sub(r'\D', '', m.group(1))
+                    # O verificar la siguiente línea si no es clave excluida
+                    if i + 1 < len(clean_lines):
+                        nxt = clean_lines[i + 1].lower()
+                        if not any(_strip_accents(nk).lower() in nxt for nk in NON_REF_KEYWORDS):
+                            m_nxt = re.search(r'^\s*[#:\-]?\s*([0-9][0-9\s\-]{3,24}[0-9])\s*$', nxt)
+                            if m_nxt:
+                                digits = re.sub(r'\D', '', m_nxt.group(1))
                                 if 4 <= len(digits) <= 20:
                                     return digits
-        # 2) Respaldo: número más largo (8-20 dígitos) en líneas que no sean cédula/teléfono/cuenta/fecha
+
+        # 2) Respaldo: número de 6 a 20 dígitos en líneas limpias (excluyendo teléfonos, cédulas y cuentas)
         candidates = []
-        for line in lines:
-            if any(nk in line for nk in NON_REF_KEYWORDS):
+        for raw_line in clean_lines:
+            line_low = raw_line.lower()
+            if any(_strip_accents(nk).lower() in line_low for nk in NON_REF_KEYWORDS):
                 continue
-            for m in re.finditer(r'(?<![\d*])(\d{8,20})(?![\d*])', line):
+            for m in re.finditer(r'(?<![\d*])(\d{6,20})(?![\d*])', raw_line):
                 num = m.group(1)
                 if re.match(r'^0?4(12|14|16|22|24|26)\d{7}$', num):   # teléfono
                     continue
@@ -181,7 +198,7 @@ class ReceiptOCRService:
         return None
 
     # ------------------------------------------------------------------
-    # PARSEO DE MONTO
+    # PARSEO DE MONTO (Insensible a mayúsculas/minúsculas)
     # ------------------------------------------------------------------
     @classmethod
     def _extract_amount(cls, lines: List[str], full: str) -> Tuple[float, str]:
@@ -191,57 +208,79 @@ class ReceiptOCRService:
             except ValueError:
                 return 0.0
 
-        # 1) Monto seguido de BS / VES  (ej: 19.544,40 Bs)
-        for line in lines:
-            if any(k in line for k in ["IDENTIFICACION", "CEDULA", "ORIGEN", "DESTINO", "TELEFONO"]):
+        clean_lines = [_strip_accents(l) for l in lines]
+        full_clean = _strip_accents(full)
+
+        # 1) Monto seguido o precedido de BS / VES (ej: 19.544,40 Bs o Bs. 1.250,00)
+        for raw_line in clean_lines:
+            line_low = raw_line.lower()
+            if any(k in line_low for k in ["identificacion", "cedula", "origen", "destino", "telefono", "cuenta"]):
                 continue
-            m = re.search(AMOUNT_RE + r'\s*(?:BS\.?S?|VES|BOLIVARES)\b', line)
+            m = re.search(AMOUNT_RE + r'\s*(?:bs\.?s?|bs\.?d?|ves|bolivares)\b', line_low, re.IGNORECASE)
             if m and _try(m.group(1)) > 0:
                 return _try(m.group(1)), "VES"
-        # 2) BS / VES seguido del monto  (ej: Bs. 19.544,40)
-        for line in lines:
-            m = re.search(r'\b(?:BS\.?S?|VES)\s*[:.]?\s*' + AMOUNT_RE, line)
+            m = re.search(r'\b(?:bs\.?s?|bs\.?d?|ves)\s*[:.]?\s*' + AMOUNT_RE, line_low, re.IGNORECASE)
             if m and _try(m.group(1)) > 0:
                 return _try(m.group(1)), "VES"
-        # 3) Línea con palabra MONTO / IMPORTE / TOTAL
-        for i, line in enumerate(lines):
-            if re.search(r'\b(MONTO|IMPORTE|TOTAL|CANTIDAD)\b', line):
-                tail = line + " " + (lines[i + 1] if i + 1 < len(lines) else "")
-                m = re.search(r'(?:MONTO|IMPORTE|TOTAL|CANTIDAD)[^0-9]*' + AMOUNT_RE, tail)
+
+        # 2) Línea con palabra MONTO / IMPORTE / TOTAL / DEBITADO / TRANSFERIDO
+        for i, raw_line in enumerate(clean_lines):
+            line_low = raw_line.lower()
+            if re.search(r'\b(monto|importe|total|cantidad|debitado|transferido|pagado)\b', line_low, re.IGNORECASE):
+                tail = raw_line + " " + (clean_lines[i + 1] if i + 1 < len(clean_lines) else "")
+                tail_low = tail.lower()
+                m = re.search(r'(?:monto|importe|total|cantidad|debitado|transferido|pagado)[^0-9]*' + AMOUNT_RE, tail_low, re.IGNORECASE)
                 if m and _try(m.group(1)) > 0:
-                    cur = "USD" if ("$" in tail or "USD" in tail) else "VES"
+                    cur = "USD" if ("$" in tail or "usd" in tail_low or "dolar" in tail_low) else "VES"
                     return _try(m.group(1)), cur
-        # 4) Dólares
-        m = re.search(r'(?:\$|USD|DOLARES)\s*' + AMOUNT_RE, full) or re.search(AMOUNT_RE + r'\s*(?:\$|USD|DOLARES)', full)
+
+        # 3) Dólares
+        m = re.search(r'(?:\$|usd|dolares)\s*' + AMOUNT_RE, full_clean, re.IGNORECASE) or re.search(AMOUNT_RE + r'\s*(?:\$|usd|dolares)', full_clean, re.IGNORECASE)
         if m and _try(m.group(1)) > 0:
             return _try(m.group(1)), "USD"
+
         return 0.0, "VES"
 
     # ------------------------------------------------------------------
-    # PARSEO DE BANCO
+    # PARSEO DE BANCO (Insensible a mayúsculas/minúsculas)
     # ------------------------------------------------------------------
     @staticmethod
     def _extract_bank(lines: List[str], full: str) -> str:
-        # Prioridad: línea "BANCO: 0102 - BANCO DE VENEZUELA" o "BANCO EMISOR"
-        for line in lines:
-            if re.match(r'^\s*BANCO(\s+EMISOR|\s+ORIGEN)?\s*[:\-]', line) or line.startswith("BANCO "):
+        clean_lines = [_strip_accents(l) for l in lines]
+        full_clean = _strip_accents(full).lower()
+
+        # Prioridad 1: Línea con "BANCO: ..." o "BANCO EMISOR / ORIGEN"
+        for raw_line in clean_lines:
+            line_low = raw_line.lower()
+            if re.match(r'^\s*banco(\s+emisor|\s+origen|\s+receptor|\s+destino)?\s*[:\-]', line_low, re.IGNORECASE) or line_low.startswith("banco "):
                 for name, aliases, code in VENEZUELAN_BANKS:
-                    if code in line or any(a in line for a in aliases):
+                    if code in line_low or any(_strip_accents(a).lower() in line_low for a in aliases):
                         return name
+
+        # Prioridad 2: Buscar alias oficiales en todo el texto (insensible a mayúsculas/minúsculas)
         for name, aliases, code in VENEZUELAN_BANKS:
-            if any(re.search(r'(?<![A-Z])' + re.escape(a) + r'(?![A-Z])', full) for a in aliases):
-                return name
+            for a in aliases:
+                a_norm = _strip_accents(a).lower()
+                pattern = r'(?<![a-zA-Z0-9])' + re.escape(a_norm) + r'(?![a-zA-Z0-9])'
+                if re.search(pattern, full_clean, re.IGNORECASE):
+                    return name
+
+        # Prioridad 3: Búsqueda por código bancario (0102, 0134, etc.)
         for name, aliases, code in VENEZUELAN_BANKS:
-            if re.search(r'\b' + code + r'\s*[-–]', full):
+            if re.search(r'\b' + code + r'\b', full_clean):
                 return name
+
         return "DESCONOCIDO"
 
     @staticmethod
     def _extract_field(lines: List[str], keys: List[str]) -> Optional[str]:
+        keys_low = [_strip_accents(k).lower() for k in keys]
         for line in lines:
-            for k in keys:
-                if line.startswith(k):
-                    val = re.sub(r'^' + re.escape(k) + r'\s*[:\-]?\s*', '', line).strip()
+            line_clean = _strip_accents(line).strip()
+            line_low = line_clean.lower()
+            for k in keys_low:
+                if line_low.startswith(k):
+                    val = re.sub(r'^' + re.escape(k) + r'\s*[:\-]?\s*', '', line_clean, flags=re.IGNORECASE).strip()
                     if val:
                         return val
         return None
@@ -251,16 +290,22 @@ class ReceiptOCRService:
     # ------------------------------------------------------------------
     @classmethod
     def parse_text_fields(cls, text: str) -> Dict[str, Any]:
-        """Extrae Banco, Referencia, Monto, Moneda y Fecha del texto del comprobante."""
-        norm = _strip_accents(text or "").upper()
-        lines = [re.sub(r'\s+', ' ', l).strip() for l in norm.splitlines() if l.strip()]
+        """Extrae Banco, Referencia, Monto, Moneda y Fecha del texto del comprobante con soporte mayúsculas/minúsculas."""
+        raw_text_clean = (text or "").strip()
+        # Normalizar espacios OCR y saltos de línea
+        pre_processed = re.sub(r'([a-zA-Z])([:\-])([a-zA-Z0-9])', r'\1\2 \3', raw_text_clean)
+        # Separar palabras unidas comunes por OCR como "Bancoemisor:" o "Bancode"
+        pre_processed = re.sub(r'\bBanco([a-z]+):', r'Banco \1:', pre_processed, flags=re.IGNORECASE)
+        pre_processed = re.sub(r'\bBanco([a-z]+)\s', r'Banco \1 ', pre_processed, flags=re.IGNORECASE)
+
+        lines = [re.sub(r'\s+', ' ', l).strip() for l in pre_processed.splitlines() if l.strip()]
         full = " \n".join(lines)
 
         payment_date = cls._extract_date(full)
         reference = cls._extract_reference(lines)
         amount, currency = cls._extract_amount(lines, full)
         bank = cls._extract_bank(lines, full)
-        payer_id = cls._extract_field(lines, ["IDENTIFICACION", "CEDULA", "C.I."])
+        payer_id = cls._extract_field(lines, ["IDENTIFICACION", "CEDULA", "C.I.", "C.I", "RIF"])
         concept = cls._extract_field(lines, ["CONCEPTO", "DESCRIPCION", "MOTIVO"])
 
         return {
@@ -272,7 +317,7 @@ class ReceiptOCRService:
             "date_detected": bool(payment_date),
             "payer_id": payer_id,
             "concept": concept,
-            "raw_text": (text or "").strip(),
+            "raw_text": raw_text_clean,
         }
 
     # ------------------------------------------------------------------

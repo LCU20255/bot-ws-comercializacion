@@ -1,6 +1,7 @@
 import logging
 import re
 import os
+import json
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from pathlib import Path
@@ -18,7 +19,9 @@ from app.database import (
     is_within_business_hours,
     add_to_waitlist,
     upsert_client,
-    get_client_by_phone
+    get_client_by_phone,
+    format_product_technical_sheet,
+    get_product_technical_sheet
 )
 
 from app.time_utils import now_vet, now_vet_date_str, now_vet_str, format_date_dmy, format_datetime_dmy
@@ -163,9 +166,120 @@ class BotFlowManager:
                 "state": "WAITING_ADVISOR"
             }
 
-        # Comando directo de Asesor Comercial
-        if clean_text.lower() in ["asesor", "humano", "asesoria", "asesoría", "ayuda"]:
+        # Comando directo o intención de Asesor Comercial
+        if analysis["intent"] == "CONNECT_ADVISOR" or clean_text.lower() in ["asesor", "humano", "asesoria", "asesoría", "ayuda"]:
             return self._build_advisor_response(phone, advisor_name)
+
+        # 3.1 DETECCIÓN DIRECTA DE CONSULTAS TÉCNICAS REGLAMENTARIAS (Tela, Botones, Grosor, Duración)
+        if analysis["intent"] == "PRODUCT_SPECS" and matched_product:
+            return self._build_product_specs_response(session, matched_product)
+
+        if analysis["intent"] == "PRODUCT_SPECS_MENU":
+            return self._build_product_specs_menu(session)
+
+        # 3.2 ESTADO: VIENDO FICHA TÉCNICA REGLAMENTARIA
+        if current_state == "VIEWING_PRODUCT_SPECS":
+            product = session.get("last_specs_product")
+
+            # Opción 1: Solicitar / Adquirir este producto
+            if clean_text in ["1", "comprar", "solicitar", "adquirir", "lo quiero", "pedir", "si", "sí"]:
+                if not product:
+                    session["state"] = "CATALOG"
+                    return self._build_catalog_menu(session, is_off_hours=is_off_hours)
+
+                # Si aún no está registrado, solicitar registro previo antes de configurar pedido
+                if not session.get("is_registered"):
+                    session["pending_specs_purchase"] = product
+                    session["state"] = "REGISTER_NAME"
+                    return self._prompt_initial_registration(session, phone)
+
+                if self._product_needs_size(product):
+                    session["pending_item"] = {"product": product, "qty": 1}
+                    session["state"] = "SELECTING_SIZE"
+                    return self._prompt_for_size(product, session)
+                else:
+                    session["pending_item"] = {"product": product, "size": None}
+                    session["state"] = "SELECTING_QUANTITY"
+                    return {
+                        "reply": (
+                            f"📦 Ha seleccionado: *{product['name']}* (${self._safe_float(product.get('price', 0)):.2f} Ref)\n\n"
+                            "🔢 *¿Cuántas unidades desea solicitar?*\n"
+                            "*(Escriba el número deseado, por ejemplo: 1, 2, 3...)*"
+                        ),
+                        "image_url": None,
+                        "state": "SELECTING_QUANTITY"
+                    }
+
+            # Opción 2: Asesor comercial humano / Cliente insatisfecho / Dudas
+            elif clean_text in ["2", "asesor", "humano", "persona", "agente", "duda", "dudas"] or any(
+                w in clean_text.lower() for w in [
+                    "no me convence", "no me queda claro", "insatisfecho", "insatisfecha",
+                    "no me gusta", "no es lo que busco", "tengo dudas", "prefiero hablar",
+                    "quiero hablar", "no responde", "no me sirve", "no estoy seguro", "no estoy conforme"
+                ]
+            ):
+                return self._build_advisor_response(phone, advisor_name)
+
+            # Opción 3: Consultar ficha de otro producto
+            elif clean_text in ["3", "otro", "otra", "otra ficha", "mas productos", "consultar otro"]:
+                return self._build_product_specs_menu(session)
+
+            # Opción 0: Menú principal
+            elif clean_text in ["0", "menu", "menú", "volver", "catalogo", "catálogo"]:
+                reset_session(phone, keep_registration=True)
+                return self._build_catalog_menu(session, is_off_hours=is_off_hours)
+
+            # Si menciona otro producto explícitamente
+            if matched_product:
+                return self._build_product_specs_response(session, matched_product)
+
+            # Si pregunta sobre detalles técnicos del producto actual (botones, tela, grosor)
+            if product and any(w in clean_text.lower() for w in ["tela", "boton", "botones", "grosor", "durabilidad", "dura", "cuanto", "cuánto", "resistencia", "color", "medida"]):
+                return self._build_product_specs_response(session, product)
+
+            # Dudas generales o insatisfacción
+            if any(w in clean_text.lower() for w in ["no se", "no sé", "pensaba", "calidad", "garantia", "garantía"]):
+                return self._build_advisor_response(phone, advisor_name)
+
+            return {
+                "reply": (
+                    "👉 Por favor seleccione una opción para continuar:\n\n"
+                    "[ 1️⃣ ] 🛒 *Solicitar / Adquirir este producto*\n"
+                    "[ 2️⃣ ] 👨‍💼 *Hablar con un Asesor Comercial Humano (atención personalizada)*\n"
+                    "[ 3️⃣ ] 📋 *Consultar ficha de otro producto*\n"
+                    "[ 0️⃣ ] 🔙 *Volver al catálogo principal*"
+                ),
+                "image_url": None,
+                "state": "VIEWING_PRODUCT_SPECS"
+            }
+
+        # 3.3 ESTADO: SELECCIONANDO QUÉ FICHA CONSULTAR
+        if current_state == "SELECTING_SPECS_PRODUCT":
+            catalog_products = get_available_catalog_products()
+            if clean_text.isdigit():
+                idx = int(clean_text)
+                if 1 <= idx <= len(catalog_products):
+                    selected = catalog_products[idx - 1]
+                    return self._build_product_specs_response(session, selected)
+                elif idx == 0:
+                    reset_session(phone, keep_registration=True)
+                    return self._build_catalog_menu(session, is_off_hours=is_off_hours)
+
+            if matched_product:
+                return self._build_product_specs_response(session, matched_product)
+
+            if clean_text in ["0", "menu", "menú", "volver"]:
+                reset_session(phone, keep_registration=True)
+                return self._build_catalog_menu(session, is_off_hours=is_off_hours)
+
+            if clean_text.lower() in ["asesor", "humano", "persona", "ayuda"]:
+                return self._build_advisor_response(phone, advisor_name)
+
+            return {
+                "reply": f"⚠️ Por favor responda con un número válido del 1 al {len(catalog_products)} o escriba 0 para volver al catálogo.",
+                "image_url": None,
+                "state": "SELECTING_SPECS_PRODUCT"
+            }
 
         # 4. VERIFICACIÓN OBLIGATORIA DE REGISTRO INICIAL (Nombre, Cédula, Teléfono)
         if not session.get("is_registered"):
@@ -183,9 +297,7 @@ class BotFlowManager:
             self._try_extract_all_registration_data(clean_text, session, phone)
             if session.get("client_name") and session.get("cedula") and session.get("contact_phone"):
                 session["is_registered"] = True
-                session["state"] = "CATALOG"
                 upsert_client(session["client_name"], session["cedula"], session["contact_phone"])
-                catalog_resp = self._build_catalog_menu(session, is_off_hours=is_off_hours)
                 welcome_header = (
                     f"✅ *¡Registro completado exitosamente!*\n\n"
                     f"👋 *Bienvenido(a), {session['client_name']}*\n"
@@ -193,6 +305,30 @@ class BotFlowManager:
                     f"📱 *Teléfono:* {session['contact_phone']}\n"
                     "──────────────────────\n"
                 )
+
+                pending_prod = session.pop("pending_specs_purchase", None)
+                if pending_prod:
+                    if self._product_needs_size(pending_prod):
+                        session["pending_item"] = {"product": pending_prod, "qty": 1}
+                        session["state"] = "SELECTING_SIZE"
+                        size_resp = self._prompt_for_size(pending_prod, session)
+                        size_resp["reply"] = welcome_header + size_resp["reply"]
+                        return size_resp
+                    else:
+                        session["pending_item"] = {"product": pending_prod, "size": None}
+                        session["state"] = "SELECTING_QUANTITY"
+                        return {
+                            "reply": welcome_header + (
+                                f"📦 Ha seleccionado: *{pending_prod['name']}* (${self._safe_float(pending_prod.get('price', 0)):.2f} Ref)\n\n"
+                                "🔢 *¿Cuántas unidades desea solicitar?*\n"
+                                "*(Escriba el número deseado, por ejemplo: 1, 2, 3...)*"
+                            ),
+                            "image_url": None,
+                            "state": "SELECTING_QUANTITY"
+                        }
+
+                session["state"] = "CATALOG"
+                catalog_resp = self._build_catalog_menu(session, is_off_hours=is_off_hours)
                 catalog_resp["reply"] = welcome_header + catalog_resp["reply"]
                 return catalog_resp
 
@@ -251,13 +387,11 @@ class BotFlowManager:
                 if ci:
                     session["cedula"] = ci.upper()
                     session["state"] = "REGISTER_PHONE"
-                    clean_ph = self._format_phone(phone)
                     return {
                         "reply": (
                             f"🪪 Cédula registrada: *{session['cedula']}*.\n\n"
-                            "📱 *Por favor, indique su número de teléfono de contacto:*\n"
-                            "*(Ejemplo: 0414-1234567)*\n\n"
-                            f"👉 *O responda '1' para usar este mismo número de WhatsApp ({clean_ph or phone})*"
+                            "📱 *Por favor, indique su número de teléfono de contacto móvil por escrito:*\n"
+                            "*(Ejemplo: 0414-1234567 o 0412-1234567)*"
                         ),
                         "image_url": None,
                         "state": "REGISTER_PHONE"
@@ -271,8 +405,8 @@ class BotFlowManager:
 
             # Paso 3: Solicitar Teléfono de Contacto
             elif current_state == "REGISTER_PHONE":
-                if clean_text.strip() == "1":
-                    contact_ph = self._format_phone(phone) or phone
+                if clean_text.strip() == "1" and self._is_valid_phone(phone):
+                    contact_ph = self._format_phone(phone)
                 else:
                     extracted_ph = nlu.extract_phone(clean_text)
                     contact_ph = self._format_phone(extracted_ph) if extracted_ph else None
@@ -280,9 +414,8 @@ class BotFlowManager:
                 if contact_ph:
                     session["contact_phone"] = contact_ph
                     session["is_registered"] = True
-                    session["state"] = "CATALOG"
                     upsert_client(session["client_name"], session["cedula"], session["contact_phone"])
-                    catalog_resp = self._build_catalog_menu(session, is_off_hours=is_off_hours)
+
                     welcome_header = (
                         f"✅ *¡Registro completado con éxito!*\n\n"
                         f"👋 *Bienvenido(a), {session['client_name']}*\n"
@@ -290,11 +423,35 @@ class BotFlowManager:
                         f"📱 *Teléfono:* {session['contact_phone']}\n"
                         "──────────────────────\n"
                     )
+
+                    pending_prod = session.pop("pending_specs_purchase", None)
+                    if pending_prod:
+                        if self._product_needs_size(pending_prod):
+                            session["pending_item"] = {"product": pending_prod, "qty": 1}
+                            session["state"] = "SELECTING_SIZE"
+                            size_resp = self._prompt_for_size(pending_prod, session)
+                            size_resp["reply"] = welcome_header + size_resp["reply"]
+                            return size_resp
+                        else:
+                            session["pending_item"] = {"product": pending_prod, "size": None}
+                            session["state"] = "SELECTING_QUANTITY"
+                            return {
+                                "reply": welcome_header + (
+                                    f"📦 Ha seleccionado: *{pending_prod['name']}* (${self._safe_float(pending_prod.get('price', 0)):.2f} Ref)\n\n"
+                                    "🔢 *¿Cuántas unidades desea solicitar?*\n"
+                                    "*(Escriba el número deseado, por ejemplo: 1, 2, 3...)*"
+                                ),
+                                "image_url": None,
+                                "state": "SELECTING_QUANTITY"
+                            }
+
+                    session["state"] = "CATALOG"
+                    catalog_resp = self._build_catalog_menu(session, is_off_hours=is_off_hours)
                     catalog_resp["reply"] = welcome_header + catalog_resp["reply"]
                     return catalog_resp
                 else:
                     return {
-                        "reply": "⚠️ Por favor ingrese un número telefónico válido (ejemplo: *0414-1234567*) o responda *1* para usar este WhatsApp.",
+                        "reply": "⚠️ Por favor ingrese su número telefónico de contacto venezolano por escrito (ejemplo: *0414-1234567* o *0412-1234567*).",
                         "image_url": None,
                         "state": "REGISTER_PHONE"
                     }
@@ -309,6 +466,52 @@ class BotFlowManager:
         if clean_text.lower() in ["0", "menu", "menú", "inicio", "empezar", "reset", "cancelar"]:
             reset_session(phone, keep_registration=True)
             return self._build_catalog_menu(session, is_off_hours=is_off_hours)
+
+        # Detección inteligente directa de uno o varios artículos, cantidades y tallas (multilínea o compuesto)
+        if current_state in ["CATALOG", "INIT", "ADDING_MORE"]:
+            catalog_products = get_available_catalog_products()
+            order_items = nlu.extract_order_items(clean_text, catalog_products)
+            if order_items:
+                added_any = False
+                needs_size_item = None
+                for itm in order_items:
+                    prod = itm["product"]
+                    qty = itm["qty"]
+                    sz = itm.get("size")
+                    if prod.get("stock", 0) <= 0:
+                        session["waitlist_product_name"] = prod["name"]
+                        session["waitlist_product_id"] = prod["id"]
+                        session["state"] = "WAITLIST_CONFIRM"
+                        return {
+                            "reply": (
+                                f"⚠️ El artículo *{prod['name']}* se encuentra actualmente *AGOTADO / SIN STOCK* en nuestro inventario.\n\n"
+                                "¿Desea que le avisemos automáticamente apenas ingrese nuevo stock a nuestro almacén?\n\n"
+                                "[ 1️⃣ ] *Sí, avisarme cuando esté disponible*\n"
+                                "[ 2️⃣ ] *Ver productos disponibles en catálogo*\n\n"
+                                "👉 Responda *1* para anotarse en la lista de espera o *2* para ver el catálogo."
+                            ),
+                            "image_url": None,
+                            "state": "WAITLIST_CONFIRM"
+                        }
+
+                    if self._product_needs_size(prod):
+                        if sz:
+                            self._add_to_cart(session, prod, qty, size=sz)
+                            added_any = True
+                        else:
+                            needs_size_item = {"product": prod, "qty": qty}
+                    else:
+                        self._add_to_cart(session, prod, qty)
+                        added_any = True
+
+                if needs_size_item and not added_any:
+                    session["pending_item"] = needs_size_item
+                    session["state"] = "SELECTING_SIZE"
+                    return self._prompt_for_size(needs_size_item["product"], session)
+
+                if added_any:
+                    session["state"] = "CART_VIEW"
+                    return self._build_cart_view(session)
 
         # Si menciona un producto directamente desde cualquier estado que no sea pago o fecha
         if matched_product and current_state in ["CATALOG", "INIT"]:
@@ -718,6 +921,7 @@ class BotFlowManager:
             # O enviar la imagen directamente (procesada en process_receipt_image)
             text_receipt = ReceiptOCRService.parse_text_fields(clean_text)
             if text_receipt["reference"] != "S/REF" or text_receipt["bank"] != "DESCONOCIDO" or text_receipt["amount"] > 0:
+                session["manual_payment_data"] = clean_text
                 return self._apply_receipt_to_session(session, text_receipt)
 
             # Si no detectó formato de pago, reiterar instrucción de subir comprobante
@@ -779,7 +983,7 @@ class BotFlowManager:
                         "[ 3️⃣ ] 10:30 AM\n"
                         "[ 4️⃣ ] 02:00 PM\n"
                         "[ 5️⃣ ] 03:30 PM\n\n"
-                        "👉 *Toca o responde con el número (1-5) o escribe la hora:*"
+                        "👉 *Toca o responde con el número (1-5) o escribe tu hora personalizada (ej: 09:15 AM o 9:01):*"
                     ),
                     "image_url": None,
                     "state": "AWAITING_SCHEDULE"
@@ -817,7 +1021,7 @@ class BotFlowManager:
                         "[ 3️⃣ ] 10:30 AM\n"
                         "[ 4️⃣ ] 02:00 PM\n"
                         "[ 5️⃣ ] 03:30 PM\n\n"
-                        "👉 *Toca o responde con el número (1-5):*"
+                        "👉 *Toca o responde con el número (1-5) o escribe tu hora personalizada (ej: 09:15 AM o 9:01):*"
                     ),
                     "image_url": None,
                     "state": "AWAITING_SCHEDULE"
@@ -832,7 +1036,7 @@ class BotFlowManager:
                     f"[ 2️⃣ ] Mañana ({days[1]['dmy']})\n"
                     f"[ 3️⃣ ] Pasado Mañana ({days[2]['dmy']})\n"
                     "[ 4️⃣ ] Otra Fecha (DD/MM/AAAA)\n\n"
-                    "👉 *Toca o responde con el número (1-4) o escribe fecha y hora:*"
+                    "👉 *Toca o responde con el número (1-4) o escribe fecha y hora personalizada (ej: Mañana a las 9:01 AM):*"
                 ),
                 "image_url": None,
                 "state": "AWAITING_SCHEDULE"
@@ -871,7 +1075,18 @@ class BotFlowManager:
         p_date = receipt_data.get("payment_date") or now_vet_date_str()
         # CONSULTAR TASA BCV HISTÓRICA DE LA FECHA DE PAGO (si fue ayer, BCV de ayer)
         bcv_rate = bcv_service.get_rate_for_date(p_date)
-        total_ves = total_usd * bcv_rate
+
+        config = get_all_config()
+        apply_iva = config.get("apply_iva", "0") == "1"
+        iva_rate = float(config.get("iva_rate", "16"))
+        if apply_iva:
+            iva_amount = round(total_usd * (iva_rate / 100.0), 2)
+            total_usd_final = round(total_usd + iva_amount, 2)
+        else:
+            iva_amount = 0.0
+            total_usd_final = round(total_usd, 2)
+
+        total_ves = round(total_usd_final * bcv_rate, 2)
 
         ref = receipt_data.get("reference") or "REC-" + now_vet().strftime("%H%M%S")
         bank = receipt_data.get("bank") or "BANCO VENEZOLANO"
@@ -880,12 +1095,14 @@ class BotFlowManager:
         session["receipt_bank"] = str(bank).strip()
         session["receipt_date"] = p_date
         session["bcv_rate_applied"] = bcv_rate
-        session["amount_usd"] = round(total_usd, 2)
-        session["amount_ves"] = round(total_ves, 2)
+        session["subtotal_usd"] = round(total_usd, 2)
+        session["iva_amount"] = iva_amount
+        session["amount_usd"] = total_usd_final
+        session["amount_ves"] = total_ves
         session["ocr_raw_text"] = receipt_data.get("raw_text", "")
+        session["ocr_data_json"] = json.dumps(receipt_data, ensure_ascii=False)
         session["state"] = "AWAITING_SCHEDULE"
 
-        config = get_all_config()
         pickup_address = config.get("pickup_address", "SEDE DE INTENDENCIA - COMPLEJO INDUSTRIAL TIUNA")
         pickup_hours = config.get("pickup_hours", "LUNES A VIERNES DE 8:00 AM A 5:00 PM")
         formatted_receipt_date = format_date_dmy(session['receipt_date'])
@@ -896,7 +1113,7 @@ class BotFlowManager:
         if rec_amount > 0 and rec_amount < (total_ves * 0.85):
             amount_note = (
                 f"\n⚠️ *Aviso de Monto:* El comprobante refleja Bs. {rec_amount:,.2f} "
-                f"(Cotizado: Bs. {total_ves:,.2f}). Su ticket quedará anotado para validación en taquilla.\n"
+                f"(Cotizado: Bs. {total_ves:,.2f}). Su ticket quedará anotado para validación contable.\n"
             )
 
         today_now = now_vet()
@@ -911,12 +1128,14 @@ class BotFlowManager:
         ]
 
         days = session["schedule_day_options"]
+        iva_line = f"🧾 *IVA ({iva_rate:g}%):* ${iva_amount:.2f} REF\n" if iva_amount > 0 else ""
         return {
             "reply": (
                 "✅ *¡COMPROBANTE DE PAGO VALIDADO SATISFACTORIAMENTE!* 📸\n\n"
                 f"🏦 *Banco:* {session['receipt_bank']}\n"
                 f"🔢 *Nro. de Referencia:* `{session['receipt_ref']}`\n"
                 f"📅 *Fecha de Pago Registrada:* {formatted_receipt_date}\n"
+                f"{iva_line}"
                 f"💵 *Monto Total:* ${session['amount_usd']:.2f} REF\n"
                 f"🇻🇪 *Equivalente en Bs:* Bs. {session['amount_ves']:,.2f}\n"
                 f"📈 *Tasa BCV Aplicada ({formatted_receipt_date}):* Bs. {bcv_rate:.2f}/$"
@@ -930,17 +1149,17 @@ class BotFlowManager:
                 f"[ 2️⃣ ] Mañana ({days[1]['dmy']})\n"
                 f"[ 3️⃣ ] Pasado Mañana ({days[2]['dmy']})\n"
                 "[ 4️⃣ ] Otra Fecha (DD/MM/AAAA)\n\n"
-                "👉 *Toca una opción o indica tu fecha y hora (ej: Mañana a las 09:30 AM):*"
+                "👉 *Toca una opción o indica tu fecha y hora (ej: Mañana a las 09:15 AM o 9:01):*"
             ),
             "image_url": None,
             "state": "AWAITING_SCHEDULE"
         }
 
     def _finalize_order(self, session: Dict[str, Any], phone: str) -> Dict[str, Any]:
-        """Crea la orden definitiva en BD con Ticket CIT-YYMMDD-XXX y descuenta Kardex"""
+        """Crea la orden definitiva en BD con Ticket CIT-YYMMDD-XXX y estado PENDIENTE POR CONFIRMAR PAGO"""
         cart = session["cart"]
         total_items = sum(item["qty"] for item in cart)
-        items_summary = " + ".join([f"{item['qty']}X {item['name']}" for item in cart])
+        items_summary = " + ".join([f"{item['qty']}X {item.get('raw_name') or item['name']}" for item in cart])
         config = get_all_config()
         pickup_address = config.get("pickup_address", "SEDE DE INTENDENCIA - COMPLEJO INDUSTRIAL TIUNA")
 
@@ -958,6 +1177,7 @@ class BotFlowManager:
             "total_amount": session.get("amount_usd", 0.0),
             "amount_usd": session.get("amount_usd", 0.0),
             "amount_ves": session.get("amount_ves", 0.0),
+            "iva_amount": session.get("iva_amount", 0.0),
             "bcv_rate_applied": session.get("bcv_rate_applied", 0.0),
             "bcv_rate_date": session.get("receipt_date"),
             "payment_method": f"PAGO MÓVIL / TRANSF ({session.get('receipt_bank', 'BANCO')})",
@@ -965,11 +1185,13 @@ class BotFlowManager:
             "receipt_bank": session.get("receipt_bank"),
             "receipt_date": session.get("receipt_date"),
             "ocr_raw_text": session.get("ocr_raw_text"),
+            "ocr_data_json": session.get("ocr_data_json"),
+            "manual_payment_data": session.get("manual_payment_data"),
             "pickup_date": session.get("pickup_date"),
             "pickup_time": session.get("pickup_time"),
-            "status": "PENDIENTE POR ATENCIÓN",
+            "status": "PENDIENTE POR CONFIRMAR PAGO",
             "is_off_hours": session.get("is_off_hours", 0),
-            "notes": f"PAGO PREVIO VERIFICADO VÍA OCR (JID: {phone})"
+            "notes": f"PAGO PREVIO REGISTRADO — EN VALIDACIÓN CONTABLE 24H (JID: {phone})"
         }
 
         saved = create_order(order_data)
@@ -984,19 +1206,28 @@ class BotFlowManager:
         session["cedula"] = cedula
         session["contact_phone"] = contact_phone
 
+        iva_line = f"🧾 *IVA:* ${saved.get('iva_amount', 0.0):.2f} REF\n" if saved.get('iva_amount', 0.0) > 0 else ""
+
         return {
             "reply": (
-                "🎉 *¡SOLICITUD Y PAGO CONFIRMADOS CON ÉXITO!* 🎉\n\n"
+                "📋 *SOLICITUD Y PAGO REGISTRADOS EN EL SISTEMA* 📋\n\n"
                 f"🎫 *TICKET OFICIAL SIS-COMER:* `{ticket_code}`\n"
                 f"👤 *CLIENTE:* {saved['client_name']}\n"
                 f"🪪 *CÉDULA:* {saved['cedula']}\n"
                 f"📞 *TELÉFONO DE CONTACTO:* {final_phone}\n"
                 f"📦 *ARTÍCULOS:* {saved['items_summary']}\n"
-                f"💵 *TOTAL PAGADO:* ${saved['amount_usd']:.2f} REF (Bs. {saved['amount_ves']:,.2f})\n"
-                f"🔢 *REF. BANCARIA:* `{saved['receipt_ref']}` ({saved['receipt_bank']})\n"
-                f"📅 *FECHA DE RETIRO:* {format_date_dmy(saved['pickup_date'])}\n"
+                f"{iva_line}"
+                f"💵 *MONTO TOTAL:* ${saved['amount_usd']:.2f} REF (Bs. {saved['amount_ves']:,.2f})\n"
+                f"🔢 *REF. DECLARADA:* `{saved['receipt_ref']}` ({saved['receipt_bank']})\n"
+                f"📅 *FECHA DE RETIRO AGENDADA:* {format_date_dmy(saved['pickup_date'])}\n"
                 f"⏰ *HORA ASIGNADA:* {saved['pickup_time']}\n"
                 f"📍 *SEDE DE RETIRO:* {pickup_address}\n\n"
+                "⏳ *ESTATUS ACTUAL:* 🟡 *PENDIENTE POR CONFIRMAR PAGO*\n\n"
+                "⚠️ *AVISO DE VERIFICACIÓN DE PAGO:*\n"
+                "Su comprobante ha sido registrado y se encuentra en proceso de revisión por nuestro departamento contable y administrativo.\n"
+                "⏱️ *Los pagos toman hasta 24 horas hábiles en validarse y conciliarse en cuenta bancaria.* "
+                "No se preocupe: su requerimiento está asegurado y en cuanto el personal valide los fondos, "
+                "recibirá automáticamente por este mismo chat su notificación de *PAGO CONFIRMADO*.\n\n"
                 "📌 *INSTRUCCIONES PARA EL RETIRO:*\n"
                 "1. Al llegar a nuestra sede, diríjase al área de *Recepción* e indique que se dirige con el *Equipo de Comercialización (Piso 1)*.\n"
                 f"2. En recepción notifique que viene a retirar su orden de: *{saved['items_summary']}*.\n"
@@ -1119,26 +1350,21 @@ class BotFlowManager:
 
     def _build_cart_view(self, session: Dict[str, Any]) -> Dict[str, Any]:
         cart = session["cart"]
-        total_items = sum(item["qty"] for item in cart)
-        total_usd = sum(item["subtotal"] for item in cart)
-        bcv_rate = bcv_service.get_rate_for_date()
-        total_ves = total_usd * bcv_rate
-
-        lines = ["🛒 *RESUMEN DE SU PEDIDO EN SIS-COMER:*\n"]
+        cart = session["cart"]
+        lines = ["✅ *Usted ha elegido:*"]
         last_image = None
         for item in cart:
-            lines.append(f"• *{item['qty']}x {item['name']}* — ${item['subtotal']:.2f} Ref *(Bs. {item['subtotal'] * bcv_rate:,.2f})*")
+            sz_str = f" (Talla: {item['size']})" if item.get("size") else ""
+            item_name = item.get("raw_name") or item.get("name")
+            lines.append(f"• *{item['qty']}x {item_name}*{sz_str}")
             if item.get("image_url"):
                 last_image = item["image_url"]
 
-        lines.append("──────────────────────")
-        lines.append(f"📊 *Artículos:* {total_items}")
-        lines.append(f"💵 *Monto Total:* ${total_usd:.2f} REF")
-        lines.append(f"🇻🇪 *Total en Bolívares:* Bs. {total_ves:,.2f} *(Tasa BCV: {bcv_rate:,.2f})*\n")
-        lines.append("👉 *Seleccione una opción para continuar:*")
+        lines.append("\n¿Desea agregar otro producto o proceder al pago?\n")
         lines.append("[ 1️⃣ ] ➕ *Agregar otro producto al pedido*")
-        lines.append("[ 2️⃣ ] 💳 *Proceder al Pago previo y Agendamiento*")
+        lines.append("[ 2️⃣ ] 💳 *Proceder al Pago previo*")
         lines.append("[ 3️⃣ ] 🗑️ *Vaciar selección / Cancelar*")
+        lines.append("\n👉 *Responda 2 para pagar o 1 para agregar otro artículo.*")
 
         return {
             "reply": "\n".join(lines),
@@ -1148,12 +1374,32 @@ class BotFlowManager:
 
     def _build_payment_instructions(self, session: Dict[str, Any]) -> Dict[str, Any]:
         cart = session["cart"]
-        total_usd = sum(item["subtotal"] for item in cart)
+        subtotal_usd = sum(item["subtotal"] for item in cart)
         bcv_rate = bcv_service.get_rate_for_date()
-        total_ves = total_usd * bcv_rate
+        subtotal_ves = round(subtotal_usd * bcv_rate, 2)
 
         config = get_all_config()
-        pm_bank = config.get("pagomovil_bank") or "Banco de Venezuela (0102)"
+        apply_iva = config.get("apply_iva", "0") == "1"
+        iva_rate = float(config.get("iva_rate", "16"))
+        if apply_iva:
+            iva_usd = round(subtotal_usd * (iva_rate / 100.0), 2)
+            total_usd = round(subtotal_usd + iva_usd, 2)
+        else:
+            iva_usd = 0.0
+            total_usd = round(subtotal_usd, 2)
+
+        iva_ves = round(iva_usd * bcv_rate, 2)
+        total_ves = round(total_usd * bcv_rate, 2)
+
+        session["subtotal_usd"] = subtotal_usd
+        session["iva_amount"] = iva_usd
+        session["amount_usd"] = total_usd
+        session["amount_ves"] = total_ves
+        session["bcv_rate_applied"] = bcv_rate
+
+        total_items = sum(item["qty"] for item in cart)
+
+        pm_bank = config.get("pagomovil_bank") or "Banco de Venezuela"
         pm_phone = config.get("pagomovil_phone") or "0412-1234567"
         pm_id = config.get("pagomovil_id") or "J-408123456"
 
@@ -1161,27 +1407,45 @@ class BotFlowManager:
         tr_account = config.get("transfer_account") or "0102-0501-80-0000123456"
         tr_holder = config.get("transfer_holder") or "COMPLEJO INDUSTRIAL TIUNA"
 
-        text = (
-            "💳 *PAGO PREVIO OBLIGATORIO — SIS-COMER* 💳\n\n"
-            "Para apartar su mercancía del inventario y asignarle fecha y hora de retiro, debe realizar el pago del monto exacto:\n\n"
-            f"💵 *MONTO TOTAL:* ${total_usd:.2f} REF\n"
-            f"🇻🇪 *MONTO EN BOLÍVARES:* Bs. {total_ves:,.2f}\n"
-            f"📈 *TASA BCV APLICADA HOY:* Bs. {bcv_rate:,.2f}/$\n\n"
-            "🏦 *CUENTAS BANCARIAS OFICIALES:*\n\n"
-            "🔹 *PAGO MÓVIL:*\n"
-            f"• Banco: {pm_bank}\n"
-            f"• Teléfono: {pm_phone}\n"
-            f"• RIF/Cédula: {pm_id}\n\n"
-            "🔹 *TRANSFERENCIA BANCARIA:*\n"
-            f"• Banco: {tr_bank}\n"
-            f"• Cuenta: {tr_account}\n"
-            f"• Titular: {tr_holder}\n\n"
-            "📸 *POR FAVOR ADJUNTE LA FOTO O CAPTURA DE SU COMPROBANTE EN ESTE CHAT*\n"
-            "*(Nuestro sistema OCR leerá la referencia, banco, monto y fecha de pago automáticamente)*\n\n"
-            "*(O escriba los datos de su pago con Banco, Referencia y Monto)*"
-        )
+        # Datos limpios para copiar y pegar sin etiquetas estorbosas en banca móvil
+        clean_pm_phone = re.sub(r'[^\d]', '', pm_phone)
+        clean_pm_id = pm_id.replace(" ", "")
+        clean_tr_account = re.sub(r'[^\d]', '', tr_account)
+
+        lines = [
+            "💳 *PAGO PREVIO OBLIGATORIO — SIS-COMER* 💳\n",
+            "🛒 *RESUMEN DE SU PEDIDO:*"
+        ]
+        for it in cart:
+            sz_str = f" (Talla: {it['size']})" if it.get("size") else ""
+            item_name = it.get("raw_name") or item.get("name")
+            lines.append(f"• *{it['qty']}x {item_name}*{sz_str} — ${it['subtotal']:.2f} Ref")
+
+        lines.append("──────────────────────")
+        lines.append(f"📊 *Total Artículos:* {total_items}")
+        lines.append(f"💵 *Subtotal:* ${subtotal_usd:.2f} REF *(Bs. {subtotal_ves:,.2f})*")
+        if apply_iva:
+            lines.append(f"🧾 *IVA ({iva_rate:g}%):* ${iva_usd:.2f} REF *(Bs. {iva_ves:,.2f})*")
+        lines.append(f"💰 *MONTO TOTAL:* ${total_usd:.2f} REF *(Bs. {total_ves:,.2f})*")
+        lines.append(f"📈 *TASA BCV APLICADA HOY:* Bs. {bcv_rate:.2f}/$\n")
+
+        lines.append("📲 *PAGO MÓVIL (Copiar y pegar):*")
+        lines.append(pm_bank.strip())
+        lines.append(pm_phone.strip())
+        lines.append(pm_id.strip())
+
+        lines.append("\n🏦 *TRANSFERENCIA BANCARIA (Copiar y pegar):*")
+        lines.append(tr_bank.strip())
+        lines.append(tr_account.strip())
+        lines.append(tr_holder.strip())
+
+        lines.append("\n──────────────────────")
+        lines.append("📸 *POR FAVOR ADJUNTE LA FOTO O CAPTURA DE SU COMPROBANTE EN ESTE CHAT*")
+        lines.append("*(Nuestro sistema OCR leerá los datos del comprobante automáticamente)*\n")
+        lines.append("*(O escriba los datos de su pago con Banco, Referencia y Monto)*")
+
         return {
-            "reply": text,
+            "reply": "\n".join(lines),
             "image_url": None,
             "state": "AWAITING_PAYMENT"
         }
@@ -1303,16 +1567,56 @@ class BotFlowManager:
         return str(val)
 
     def _build_advisor_response(self, phone: str, advisor_name: str = "Asesor Comercial") -> Dict[str, Any]:
+        config = get_all_config()
+        adv_phone = config.get("advisor_phone") or config.get("pagomovil_phone") or "0412-1234567"
+        clean_digits = re.sub(r'\D', '', adv_phone)
+        wa_digits = f"58{clean_digits[1:]}" if clean_digits.startswith("0") else (clean_digits if clean_digits.startswith("58") else f"58{clean_digits}")
+        session = get_session(phone)
+        session["state"] = "WAITING_ADVISOR"
         return {
             "reply": (
                 "👨‍💼 *TRANSFERENCIA A ASESOR COMERCIAL SIS-COMER:*\n\n"
-                "Has solicitado atención con nuestro equipo comercial. "
-                f"Nuestro asesor *{advisor_name}* tomará este mismo chat para atenderte a la brevedad posible.\n\n"
-                "👉 *Por favor indícanos tu requerimiento o consulta aquí mismo.* Te responderemos directamente por esta conversación.\n\n"
-                "*(Escribe 0 en cualquier momento para regresar al menú automatizado)*"
+                "Para brindarle la mejor orientación y resolver cualquier duda técnica o requerimiento especial, "
+                f"nuestro asesor comercial *{advisor_name}* se encuentra a su completa disposición:\n\n"
+                f"📞 *Teléfono:* {adv_phone}\n"
+                f"💬 *WhatsApp directo:* https://wa.me/{wa_digits}?text=Hola%2C%20necesito%20atenci%C3%B3n%20personalizada%20con%20un%20asesor\n\n"
+                "👉 *También puede escribir su consulta técnica aquí mismo* y un agente de comercialización le responderá directamente por esta conversación.\n\n"
+                "*(Escriba 0 en cualquier momento para regresar al menú principal)*"
             ),
             "image_url": None,
             "state": "WAITING_ADVISOR"
         }
+
+    def _build_product_specs_response(self, session: Dict[str, Any], product: Dict[str, Any]) -> Dict[str, Any]:
+        bcv_rate = bcv_service.get_rate_for_date()
+        sheet_text = format_product_technical_sheet(product, bcv_rate=bcv_rate)
+        session["last_specs_product"] = product
+        session["state"] = "VIEWING_PRODUCT_SPECS"
+        return {
+            "reply": sheet_text,
+            "image_url": product.get("image_url"),
+            "state": "VIEWING_PRODUCT_SPECS"
+        }
+
+    def _build_product_specs_menu(self, session: Dict[str, Any]) -> Dict[str, Any]:
+        products = get_available_catalog_products()
+        lines = [
+            "📋 *CONSULTA DE FICHAS TÉCNICAS REGLAMENTARIAS*",
+            "🏭 *Complejo Industrial Tiuna — Confección Militar*",
+            "──────────────────────",
+            "Seleccione el artículo del cual desea conocer las especificaciones reglamentarias (tela, grosor, botones, durabilidad):\n"
+        ]
+        for idx, p in enumerate(products, 1):
+            lines.append(f"[ {idx}️⃣ ] *{p['name']}*")
+
+        lines.append("\n[ 0️⃣ ] 🔙 Volver al catálogo principal")
+        lines.append(f"\n👉 *Responda con el número (1-{len(products)}) o escriba el nombre del artículo:*")
+        session["state"] = "SELECTING_SPECS_PRODUCT"
+        return {
+            "reply": "\n".join(lines),
+            "image_url": None,
+            "state": "SELECTING_SPECS_PRODUCT"
+        }
+
 
 bot_manager = BotFlowManager()

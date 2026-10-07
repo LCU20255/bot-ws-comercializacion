@@ -73,7 +73,12 @@ def init_db(conn=None):
     for col, col_type in [
         ("requires_size", "INTEGER DEFAULT 0"),
         ("min_stock_alert", "INTEGER DEFAULT 20"),
-        ("available_sizes", "TEXT DEFAULT ''")
+        ("available_sizes", "TEXT DEFAULT ''"),
+        ("technical_specs", "TEXT DEFAULT ''"),
+        ("fabric", "TEXT DEFAULT ''"),
+        ("buttons_closures", "TEXT DEFAULT ''"),
+        ("durability", "TEXT DEFAULT ''"),
+        ("thickness_weight", "TEXT DEFAULT ''")
     ]:
         try:
             cursor.execute(f"ALTER TABLE products ADD COLUMN {col} {col_type}")
@@ -133,7 +138,10 @@ def init_db(conn=None):
         ("receipt_ref", "TEXT"),
         ("receipt_bank", "TEXT"),
         ("receipt_date", "TEXT"),
-        ("ocr_raw_text", "TEXT")
+        ("ocr_raw_text", "TEXT"),
+        ("manual_payment_data", "TEXT"),
+        ("ocr_data_json", "TEXT"),
+        ("iva_amount", "REAL DEFAULT 0.0")
     ]
     for col_name, col_type in order_cols:
         try:
@@ -141,6 +149,21 @@ def init_db(conn=None):
             conn.commit()
         except Exception:
             pass
+
+    # 3.1. Tabla: order_status_history (Auditoría Histórica de Estados de Pedido)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS order_status_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_id INTEGER NOT NULL,
+        ticket_code TEXT,
+        previous_status TEXT,
+        new_status TEXT NOT NULL,
+        changed_by TEXT DEFAULT 'ADMIN',
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT (datetime('now', '-4 hours')),
+        FOREIGN KEY(order_id) REFERENCES orders(id)
+    );
+    """)
 
     # 4. Tabla: inventory_movements (Kardex Histórico Militar)
     cursor.execute("""
@@ -201,10 +224,13 @@ def init_db(conn=None):
             pass
 
     conn.commit()
-
-    conn.commit()
     if should_close:
         conn.close()
+
+    try:
+        seed_product_technical_specs()
+    except Exception:
+        pass
 
 # ----------------- PRODUCT CRUD -----------------
 def get_products(only_active=True) -> List[Dict[str, Any]]:
@@ -238,8 +264,8 @@ def create_product(data: Dict[str, Any], updated_by: str = "ADMIN") -> int:
     current_time_vet = now_vet_str()
 
     cursor.execute("""
-        INSERT INTO products (name, slug, description, price, price_display, category, image_url, stock, is_active, requires_size, available_sizes, keywords, updated_at, updated_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO products (name, slug, description, price, price_display, category, image_url, stock, is_active, requires_size, available_sizes, keywords, technical_specs, fabric, buttons_closures, durability, thickness_weight, updated_at, updated_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         name,
         slug,
@@ -253,6 +279,11 @@ def create_product(data: Dict[str, Any], updated_by: str = "ADMIN") -> int:
         requires_size,
         data.get("available_sizes", "").strip().upper(),
         data.get("keywords", "").lower(),
+        data.get("technical_specs", ""),
+        data.get("fabric", ""),
+        data.get("buttons_closures", ""),
+        data.get("durability", ""),
+        data.get("thickness_weight", ""),
         current_time_vet,
         updated_by.upper()
     ))
@@ -273,7 +304,7 @@ def update_product(product_id: int, data: Dict[str, Any], updated_by: str = "ADM
 
     cursor.execute("""
         UPDATE products
-        SET name = ?, description = ?, price = ?, price_display = ?, category = ?, image_url = ?, stock = ?, is_active = ?, requires_size = ?, available_sizes = ?, keywords = ?, updated_at = ?, updated_by = ?
+        SET name = ?, description = ?, price = ?, price_display = ?, category = ?, image_url = ?, stock = ?, is_active = ?, requires_size = ?, available_sizes = ?, keywords = ?, technical_specs = ?, fabric = ?, buttons_closures = ?, durability = ?, thickness_weight = ?, updated_at = ?, updated_by = ?
         WHERE id = ?
     """, (
         name,
@@ -287,6 +318,11 @@ def update_product(product_id: int, data: Dict[str, Any], updated_by: str = "ADM
         requires_size,
         data.get("available_sizes", "").strip().upper(),
         data.get("keywords", "").lower(),
+        data.get("technical_specs", ""),
+        data.get("fabric", ""),
+        data.get("buttons_closures", ""),
+        data.get("durability", ""),
+        data.get("thickness_weight", ""),
         current_time_vet,
         updated_by.upper(),
         product_id
@@ -294,6 +330,149 @@ def update_product(product_id: int, data: Dict[str, Any], updated_by: str = "ADM
     conn.commit()
     conn.close()
     return True
+
+# ----------------- FICHAS TÉCNICAS REGLAMENTARIAS MILITARES -----------------
+MILITARY_CATALOG_SPECS: Dict[str, Dict[str, str]] = {
+    "CHAQUETA PATRIOTA TIUNA": {
+        "official_name": "CHAQUETA DE CAMPAÑA PATRIOTA FANB (MODELO REGLAMENTARIO CIT)",
+        "fabric": "Ripstop Militar Antidesgarro de alta tenacidad (65% Poliéster / 35% Algodón peinado de fibra larga), ligamento tafetán con retícula antirrasgado.",
+        "thickness_weight": "Calibre pesado reglamentario de 240 g/m² (±5%), densidad térmica equilibrada y transpirabilidad de campaña.",
+        "buttons_closures": "5 botones militares de pasta reforzada de 4 orificios ocultos bajo tapeta protectora anti-enganche en ramas/equipo + cierre frontal de alta tracción y paneles de velcro táctico mil-spec en pecho y mangas para porta-nombres y jerarquías.",
+        "durability": "Confección para operaciones tácticas y de campo de alto rendimiento. Alta resistencia a la fricción de campaña, abrasión, lavado industrial sin encogimiento (> 2.000 horas operativas de vida útil). 4 bolsillos frontales de fuelle con solapa de seguridad.",
+        "sizes": "S, M, L, XL, XXL",
+        "colors": "Verde Oliva Patriota FANB"
+    },
+    "BOTAS MILITARES CAMPAÑA": {
+        "official_name": "BOTA TÁCTICA DE CAMPAÑA Y COMBATE FANB (MODELO REGLAMENTARIO CIT)",
+        "fabric": "Cuero vacuno genuino flor hidrofugado calibre 2.0 - 2.2 mm de alta tenacidad, combinado con paneles laterales en lona balística Cordura de nylon 1000D impermeable y transpirable en caña.",
+        "thickness_weight": "Espesor de cuero flor de 2.2 mm con puntera y talón reforzados. Suela inyectada de caucho vulcanizado nitrilo antideslizante con tacos de tracción profunda para fango, roca y superficies resbaladizas.",
+        "buttons_closures": "8 pares de ojetes y pasacables metálicos pavonados anticorrosivos con sistema de amarre rápido. Cordones trenzados de paracord militar de alta resistencia a la rotura (+150 kg de tracción).",
+        "durability": "Diseñada para marchas continuas en condiciones extremas de selva, fango, agua, asfalto y roca (+18 a 24 meses de servicio operativo continuo). Plantilla ergonómica antibacterial con amortiguación de impacto.",
+        "sizes": "38, 39, 40, 41, 42, 43, 44",
+        "colors": "Negro Táctico Reglamentario"
+    },
+    "GORRA TÁCTICA PATRIOTA": {
+        "official_name": "GORRA TÁCTICA MILITAR DE CAMPAÑA PATRIOTA CIT",
+        "fabric": "Tejido Ripstop antidesgarro militar (65% Poliéster / 35% Algodón peinado) de 220 g/m², con tratamiento protector contra rayos ultravioleta (UV) y absorción de sudor.",
+        "thickness_weight": "Visera rígida termo-moldeada de 6 costuras paralelas indeformable. Estructura de 6 paneles con ojales bordados de ventilación perimetral.",
+        "buttons_closures": "Botón superior metálico forrado de perfil ultra-bajo sin remache saliente (compatible con protectores auditivos de tiro o cascos). Ajuste posterior con cierre de velcro mil-spec y panel frontal de velcro (7.5 x 5 cm) para parche o jerarquía.",
+        "durability": "Alta resistencia a la exposición solar extrema, humedad y sudoración continua sin pérdida de forma ni tonalidad.",
+        "sizes": "Talla Única Ergonómica Ajustable",
+        "colors": "Verde Oliva Patriota FANB"
+    },
+    "PARCHE BANDERA DE VENEZUELA": {
+        "official_name": "DISTINTIVO TÁCTICO BANDERA NACIONAL TRICOLOR CON 8 ESTRELLAS",
+        "fabric": "Hilatura 100% poliéster de alta tenacidad con hilos de brillo reglamentario fijados térmicamente sobre base de sarga militar pesada. Borde overlock perimetral reforzado anti-deshilache.",
+        "thickness_weight": "Grosor táctico de 2.5 mm; dimensiones reglamentarias 8.0 x 5.0 cm.",
+        "buttons_closures": "Respaldo completo con sistema micro-velcro de gancho (Hook) grado militar cosido con doble pespunte perimetral para acople instantáneo en uniformes, gorras y chalecos tácticos.",
+        "durability": "Colores reactivos con máxima solidez a la intemperie; resistente a sol, agua, lodo y uso táctico intensivo.",
+        "sizes": "8.0 x 5.0 cm (Medida Reglamentaria)",
+        "colors": "Tricolor Nacional con 8 Estrellas Bordadas"
+    }
+}
+
+def seed_product_technical_specs():
+    """
+    Puebla o enriquece las especificaciones técnicas reglamentarias oficiales
+    para los productos del catálogo militar en la base de datos.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name, fabric, buttons_closures, durability, thickness_weight, technical_specs FROM products")
+    products = cursor.fetchall()
+    
+    for p in products:
+        p_name = str(p["name"]).strip().upper()
+        # Buscar coincidencia en especificaciones reglamentarias
+        matched_spec = None
+        for spec_key, spec_data in MILITARY_CATALOG_SPECS.items():
+            if spec_key in p_name or p_name in spec_key:
+                matched_spec = spec_data
+                break
+        
+        if matched_spec:
+            need_update = (
+                not (p["fabric"] and p["fabric"].strip()) or
+                not (p["buttons_closures"] and p["buttons_closures"].strip()) or
+                not (p["durability"] and p["durability"].strip()) or
+                not (p["thickness_weight"] and p["thickness_weight"].strip())
+            )
+            if need_update:
+                cursor.execute("""
+                    UPDATE products 
+                    SET fabric = ?, buttons_closures = ?, durability = ?, thickness_weight = ?,
+                        technical_specs = ?
+                    WHERE id = ?
+                """, (
+                    matched_spec["fabric"],
+                    matched_spec["buttons_closures"],
+                    matched_spec["durability"],
+                    matched_spec["thickness_weight"],
+                    f"Oficial: {matched_spec['official_name']}. Tela: {matched_spec['fabric']}. Cierres/Botones: {matched_spec['buttons_closures']}. Durabilidad: {matched_spec['durability']}",
+                    p["id"]
+                ))
+    conn.commit()
+    conn.close()
+
+def get_product_technical_sheet(product: Dict[str, Any]) -> Dict[str, str]:
+    """Retorna un diccionario completo con las especificaciones técnicas de un producto"""
+    p_name = str(product.get("name", "")).strip().upper()
+    
+    # Buscar especificación reglamentaria predeterminada
+    preset = None
+    for spec_key, spec_data in MILITARY_CATALOG_SPECS.items():
+        if spec_key in p_name or p_name in spec_key:
+            preset = spec_data
+            break
+
+    fabric = product.get("fabric") or (preset["fabric"] if preset else "Tejido militar reglamentario de alta resistencia")
+    thickness = product.get("thickness_weight") or (preset["thickness_weight"] if preset else "Calibre pesado de campaña estándar FANB")
+    buttons = product.get("buttons_closures") or (preset["buttons_closures"] if preset else "Botonadura y cierres militares reforzados anti-enganche")
+    durability = product.get("durability") or (preset["durability"] if preset else "Alta durabilidad y resistencia probada en operaciones tácticas")
+    official_name = (preset["official_name"] if preset else f"{p_name} — ESPECIFICACIÓN REGLAMENTARIA")
+    sizes = product.get("available_sizes") or (preset["sizes"] if preset else "S, M, L, XL")
+
+    return {
+        "name": p_name,
+        "official_name": official_name,
+        "fabric": fabric,
+        "thickness_weight": thickness,
+        "buttons_closures": buttons,
+        "durability": durability,
+        "sizes": sizes,
+        "description": product.get("description", "")
+    }
+
+def format_product_technical_sheet(product: Dict[str, Any], bcv_rate: float = 0.0) -> str:
+    """Genera el mensaje formateado en markdown militar con la Ficha Técnica Reglamentaria"""
+    specs = get_product_technical_sheet(product)
+    price_usd = float(product.get("price", 0.0))
+    price_str = f"${price_usd:.2f} REF"
+    if bcv_rate > 0:
+        price_ves = price_usd * bcv_rate
+        price_str += f" *(Bs. {price_ves:,.2f})*"
+
+    lines = [
+        "📋 *FICHA TÉCNICA REGLAMENTARIA OFICIAL*",
+        "🏭 *Complejo Industrial Tiuna — Confección Militar*",
+        "──────────────────────",
+        f"🏷️ *Producto:* *{specs['name']}*",
+        f"🎖️ *Denominación:* {specs['official_name']}",
+        f"🧵 *Tipo de Tela / Material:* {specs['fabric']}",
+        f"📐 *Grosor / Gramaje:* {specs['thickness_weight']}",
+        f"🔘 *Botonadura y Cierres:* {specs['buttons_closures']}",
+        f"🛡️ *Durabilidad y Resistencia:* {specs['durability']}",
+        f"📏 *Tallas Reglamentarias:* {specs['sizes']}",
+        f"💵 *Precio Oficial:* {price_str}",
+        "──────────────────────",
+        "👉 *¿Deseas solicitar este artículo o tienes alguna duda adicional?*\n",
+        "[ 1️⃣ ] 🛒 *Solicitar / Adquirir este producto*",
+        "[ 2️⃣ ] 👨‍💼 *Hablar con un Asesor Comercial Humano (atención personalizada)*",
+        "[ 3️⃣ ] 📋 *Consultar ficha de otro producto*",
+        "[ 0️⃣ ] 🔙 *Volver al catálogo principal*"
+    ]
+    return "\n".join(lines)
+
 
 def delete_product(product_id: int) -> bool:
     conn = get_connection()
@@ -357,7 +536,7 @@ def create_order(data: Dict[str, Any]) -> Dict[str, Any]:
     cedula = str(data["cedula"]).strip().upper()
     phone = str(data["phone"]).strip()
     payment_method = str(data.get("payment_method", "EFECTIVO / DIVISAS")).strip().upper()
-    status = str(data.get("status", "PENDIENTE POR ATENCIÓN")).strip().upper()
+    status = str(data.get("status", "PENDIENTE POR CONFIRMAR PAGO")).strip().upper()
 
     items_detail = data.get("items_detail", [])
     if isinstance(items_detail, list):
@@ -369,12 +548,26 @@ def create_order(data: Dict[str, Any]) -> Dict[str, Any]:
     total_amount = float(data.get("total_amount", 0.0))
     amount_usd = float(data.get("amount_usd", total_amount))
     amount_ves = float(data.get("amount_ves", 0.0))
+    iva_amount = float(data.get("iva_amount", 0.0))
     bcv_rate_applied = float(data.get("bcv_rate_applied", 0.0))
     bcv_rate_date = str(data.get("bcv_rate_date", now_vet_date_str()))
     receipt_ref = data.get("receipt_ref")
     receipt_bank = data.get("receipt_bank")
     receipt_date = data.get("receipt_date")
     ocr_raw_text = data.get("ocr_raw_text")
+
+    manual_payment_data = data.get("manual_payment_data")
+    if isinstance(manual_payment_data, (dict, list)):
+        manual_payment_data_str = json.dumps(manual_payment_data, ensure_ascii=False)
+    else:
+        manual_payment_data_str = str(manual_payment_data) if manual_payment_data else None
+
+    ocr_data_json = data.get("ocr_data_json")
+    if isinstance(ocr_data_json, (dict, list)):
+        ocr_data_json_str = json.dumps(ocr_data_json, ensure_ascii=False)
+    else:
+        ocr_data_json_str = str(ocr_data_json) if ocr_data_json else None
+
     created_at_vet = now_vet_str()
 
     cursor.execute("""
@@ -383,9 +576,10 @@ def create_order(data: Dict[str, Any]) -> Dict[str, Any]:
             items_summary, items_detail, total_items, total_amount,
             amount_usd, amount_ves, bcv_rate_applied, bcv_rate_date,
             payment_method, receipt_ref, receipt_bank, receipt_date, ocr_raw_text,
+            manual_payment_data, ocr_data_json, iva_amount,
             pickup_date, pickup_time, status, is_off_hours, notes, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         ticket_code, client_name, cedula, phone,
         items_summary, items_detail_json,
@@ -393,6 +587,7 @@ def create_order(data: Dict[str, Any]) -> Dict[str, Any]:
         total_amount,
         amount_usd, amount_ves, bcv_rate_applied, bcv_rate_date,
         payment_method, receipt_ref, receipt_bank, receipt_date, ocr_raw_text,
+        manual_payment_data_str, ocr_data_json_str, iva_amount,
         data.get("pickup_date", now_vet_date_str()),
         data.get("pickup_time", "09:00 AM"),
         status,
@@ -402,6 +597,21 @@ def create_order(data: Dict[str, Any]) -> Dict[str, Any]:
     ))
     conn.commit()
     order_id = cursor.lastrowid
+
+    # Registrar en auditoría histórica de estatus
+    try:
+        cursor.execute("""
+            INSERT INTO order_status_history (
+                order_id, ticket_code, previous_status, new_status, changed_by, notes, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            order_id, ticket_code, None, status, "CLIENTE_BOT",
+            "Registro inicial de pedido y comprobante de pago", created_at_vet
+        ))
+        conn.commit()
+    except Exception as e:
+        logger.error(f"Error registrando historial inicial para orden {order_id}: {e}")
 
     # Descontar stock automáticamente y registrar en Kardex si hay productos
     if isinstance(items_detail, list):
@@ -494,11 +704,13 @@ def update_order(order_id: int, data: Dict[str, Any]) -> bool:
     conn.close()
     return True
 
-def update_order_status(order_id: int, status: str) -> bool:
+def update_order_status(order_id: int, status: str, changed_by: str = "ADMIN", notes: str = "") -> bool:
     """
     Actualiza el estatus de un pedido y gestiona automáticamente el inventario Kardex:
     - Si se cambia a CANCELADO/ANULADO: Retorna los productos al stock y crea movimiento REVERSO_CANCELACION en Kardex.
     - Si se reactiva desde CANCELADO a un estado activo: Vuelve a descontar del stock y crea movimiento SALIDA_VENTA.
+    - Audita cada cambio en la tabla order_status_history.
+    - Si el nuevo estado es CONFIRMADA, notifica automáticamente al cliente por WhatsApp.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -549,7 +761,7 @@ def update_order_status(order_id: int, status: str) -> bool:
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """, (
                                 prod_id, "REVERSO_CANCELACION", qty, prev_stock,
-                                new_stock, order_id, order.get("client_name"), "ADMIN_PANEL",
+                                new_stock, order_id, order.get("client_name"), changed_by,
                                 f"Retorno a inventario por pedido cancelado (Ticket: {order.get('ticket_code')})",
                                 now_str
                             ))
@@ -578,7 +790,7 @@ def update_order_status(order_id: int, status: str) -> bool:
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """, (
                                 prod_id, "SALIDA_VENTA", -qty, prev_stock,
-                                new_stock, order_id, order.get("client_name"), "ADMIN_PANEL",
+                                new_stock, order_id, order.get("client_name"), changed_by,
                                 f"Descuento de inventario por reactivación de pedido (Ticket: {order.get('ticket_code')})",
                                 now_str
                             ))
@@ -587,8 +799,75 @@ def update_order_status(order_id: int, status: str) -> bool:
 
     cursor.execute("UPDATE orders SET status = ? WHERE id = ?", (new_status, order_id))
     conn.commit()
+
+    # Auditoría Histórica de Estado
+    if old_status != new_status:
+        try:
+            cursor.execute("""
+                INSERT INTO order_status_history (
+                    order_id, ticket_code, previous_status, new_status, changed_by, notes, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                order_id, order.get("ticket_code"), old_status, new_status,
+                changed_by, notes or f"Cambio de estado a {new_status}", now_str
+            ))
+            conn.commit()
+        except Exception as e:
+            logger.error(f"Error registrando auditoría de estado para pedido {order_id}: {e}")
+
+    # Notificación automática de Pago Confirmado al cliente vía WhatsApp
+    if new_status == "CONFIRMADA" and old_status != "CONFIRMADA":
+        try:
+            from app.whatsapp_service import wa_service
+            cfg = get_all_config()
+            p_addr = cfg.get("pickup_address", "SEDE DE INTENDENCIA - COMPLEJO INDUSTRIAL TIUNA")
+            t_code = order.get("ticket_code")
+            c_name = order.get("client_name")
+            p_date_raw = order.get("receipt_date")
+            p_date_fmt = format_date_dmy(p_date_raw) if p_date_raw else now_vet_date_str()
+            ret_date_fmt = format_date_dmy(order.get("pickup_date")) if order.get("pickup_date") else "POR COORDINAR"
+
+            conf_msg = (
+                "✅ *¡PAGO CONFIRMADO EXITOSAMENTE!* ✅\n"
+                "🏭 *COMPLEJO INDUSTRIAL TIUNA — SIS-COMER*\n\n"
+                f"Estimado(a) *{c_name}*, le notificamos que su pago ha sido verificado y aprobado satisfactoriamente por nuestro equipo de administración.\n\n"
+                f"🎫 *TICKET:* `{t_code}`\n"
+                f"📦 *ARTÍCULOS:* {order.get('items_summary')}\n"
+                f"💵 *MONTO CONCILIADO:* ${float(order.get('amount_usd', 0.0)):.2f} REF (Bs. {float(order.get('amount_ves', 0.0)):,.2f})\n"
+                f"🔢 *NRO. DE REFERENCIA:* `{order.get('receipt_ref') or 'S/REF'}`\n"
+                f"🏦 *BANCO:* {order.get('receipt_bank') or 'BANCO'}\n"
+                f"📅 *FECHA DE PAGO:* {p_date_fmt}\n"
+                f"🗓️ *FECHA DE RETIRO:* {ret_date_fmt}\n"
+                f"⏰ *HORA:* {order.get('pickup_time') or '09:00 AM'}\n"
+                f"📍 *SEDE DE RETIRO:* {p_addr}\n\n"
+                "📌 *INSTRUCCIONES PARA EL RETIRO:*\n"
+                "1. Presentar su Cédula de Identidad física en la taquilla de atención.\n"
+                f"2. Mostrar este ticket de atención: *{t_code}*.\n"
+                "3. Su orden ya ha sido registrada en el sistema de confección y despacho.\n\n"
+                "¡Gracias por su compra en SIS-COMER! Le esperamos."
+            )
+            phone_target = order.get("phone")
+            if phone_target:
+                wa_service.send_message_sync(phone_target, conf_msg)
+                logger.info(f"Notificación de confirmación de pago despachada a {phone_target} para orden {t_code}")
+        except Exception as e:
+            logger.error(f"Error despachando notificación WhatsApp de pago confirmado para orden {order_id}: {e}")
+
     conn.close()
     return True
+
+def get_order_status_history(order_id: int) -> List[Dict[str, Any]]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT * FROM order_status_history
+        WHERE order_id = ?
+        ORDER BY id ASC
+    """, (order_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 def delete_order(order_id: int) -> bool:
     """
@@ -677,7 +956,9 @@ DEFAULT_SYSTEM_CONFIG = {
     "transfer_bank": "BANCO DE VENEZUELA",
     "transfer_account": "0102-0501-80-0000123456",
     "transfer_holder": "COMPLEJO INDUSTRIAL TIUNA",
-    "payment_methods_active": "PAGO MÓVIL, TRANSFERENCIA BANCARIA"
+    "payment_methods_active": "PAGO MÓVIL, TRANSFERENCIA BANCARIA",
+    "apply_iva": "0",
+    "iva_rate": "16"
 }
 
 def get_all_config() -> Dict[str, str]:
@@ -1280,6 +1561,61 @@ def get_daily_sales_report(target_date: Optional[str] = None) -> Dict[str, Any]:
         "itemized_table": itemized_table,
         "detailed_orders": detailed_orders,
         "whatsapp_text": "\n".join(wa_lines)
+    }
+
+def reset_operational_data(preserve_catalog: bool = True) -> Dict[str, Any]:
+    """
+    Borrón y cuenta nueva de datos operativos:
+    - Elimina todos los pedidos (orders).
+    - Elimina el historial de estados de pedidos (order_status_history).
+    - Elimina el historial de movimientos Kardex (inventory_movements).
+    - Elimina clientes registrados de prueba (clients).
+    - Elimina la lista de espera (product_waitlist).
+    - CONSERVA intactos: Catálogo Militar (products), Histórico de Tasas BCV (bcv_rates) y Ajustes del Sistema (system_config).
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("SELECT COUNT(*) FROM orders")
+    deleted_orders = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM inventory_movements")
+    deleted_kardex = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM clients")
+    deleted_clients = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM product_waitlist")
+    deleted_waitlist = cur.fetchone()[0]
+
+    cur.execute("DELETE FROM orders")
+    cur.execute("DELETE FROM order_status_history")
+    cur.execute("DELETE FROM inventory_movements")
+    cur.execute("DELETE FROM clients")
+    cur.execute("DELETE FROM product_waitlist")
+
+    try:
+        cur.execute("DELETE FROM sqlite_sequence WHERE name IN ('orders', 'order_status_history', 'inventory_movements', 'clients', 'product_waitlist')")
+    except Exception:
+        pass
+
+    conn.commit()
+    conn.close()
+
+    try:
+        from app.bot_flow import user_sessions
+        user_sessions.clear()
+    except Exception:
+        pass
+
+    return {
+        "status": "success",
+        "message": "Borrón y cuenta nueva completado. Catálogo Militar conservado intacto.",
+        "deleted_orders": deleted_orders,
+        "deleted_kardex_movements": deleted_kardex,
+        "deleted_clients": deleted_clients,
+        "deleted_waitlist": deleted_waitlist,
+        "catalog_preserved": preserve_catalog
     }
 
 

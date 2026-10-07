@@ -25,7 +25,7 @@ from app.database import (
     get_available_catalog_products, get_financial_and_sales_metrics,
     get_waitlist, mark_waitlist_notified, update_waitlist_item,
     delete_waitlist_item, convert_waitlist_to_order, reset_database_to_virgin,
-    get_daily_sales_report
+    get_daily_sales_report, get_order_status_history, reset_operational_data
 )
 from app.time_utils import now_vet, now_vet_str, now_vet_date_str
 from app.bot_flow import bot_manager, reset_session
@@ -161,6 +161,11 @@ class ProductSchema(BaseModel):
     requires_size: Optional[int] = 0
     available_sizes: Optional[str] = ""
     keywords: Optional[str] = ""
+    technical_specs: Optional[str] = ""
+    fabric: Optional[str] = ""
+    buttons_closures: Optional[str] = ""
+    durability: Optional[str] = ""
+    thickness_weight: Optional[str] = ""
     updated_by: Optional[str] = "ADMIN"
 
 class OrderUpdateSchema(BaseModel):
@@ -178,6 +183,8 @@ class OrderUpdateSchema(BaseModel):
 
 class StatusUpdateSchema(BaseModel):
     status: str
+    changed_by: Optional[str] = "ADMIN"
+    notes: Optional[str] = ""
 
 class SimulateChatSchema(BaseModel):
     phone: str = "+584120000001"
@@ -209,6 +216,8 @@ class ConfigSchema(BaseModel):
     transfer_account: Optional[str] = None
     transfer_holder: Optional[str] = None
     payment_methods_active: Optional[str] = None
+    apply_iva: Optional[str] = None
+    iva_rate: Optional[str] = None
 
 # ----------------- VIEWS -----------------
 @app.get("/favicon.ico", include_in_schema=False)
@@ -321,8 +330,12 @@ def api_update_order(order_id: int, body: OrderUpdateSchema):
 
 @app.put("/api/orders/{order_id}/status")
 def api_update_order_status(order_id: int, body: StatusUpdateSchema):
-    update_order_status(order_id, body.status)
+    update_order_status(order_id, body.status, changed_by=body.changed_by or "ADMIN", notes=body.notes or "")
     return {"status": "ok", "message": f"Estado actualizado a {body.status.upper()}"}
+
+@app.get("/api/orders/{order_id}/history")
+def api_get_order_history(order_id: int):
+    return get_order_status_history(order_id)
 
 @app.delete("/api/orders/{order_id}")
 def api_delete_order(order_id: int):
@@ -725,7 +738,17 @@ def api_notify_single_waitlist(waitlist_id: int):
         mark_waitlist_notified(waitlist_id)
     return {"status": "ok", "message": f"Notificación enviada al cliente {target['phone']}"}
 
-# ----------------- REST API: RESET SISTEMA VIRGEN -----------------
+# ----------------- REST API: RESET SISTEMA VIRGEN & DATOS OPERATIVOS -----------------
+@app.post("/api/admin/reset-operational-data")
+def api_reset_operational_data():
+    """
+    Borrón y cuenta nueva de datos operativos:
+    Elimina pedidos, historial kardex, clientes y lista de espera.
+    CONSERVA intactos el Catálogo Militar de productos, tasas BCV y configuraciones.
+    """
+    res = reset_operational_data(preserve_catalog=True)
+    return res
+
 @app.post("/api/system/reset-virgin")
 def api_reset_virgin():
     reset_database_to_virgin()

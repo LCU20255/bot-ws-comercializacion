@@ -157,6 +157,7 @@
             <div class="filter-actions">
               <select id="filter-status" onchange="filterOrders()">
                 <option value="ALL">Todos los Estados</option>
+                <option value="PENDIENTE POR CONFIRMAR PAGO">PENDIENTE POR CONFIRMAR PAGO</option>
                 <option value="PENDIENTE POR ATENCIÓN">PENDIENTE POR ATENCIÓN</option>
                 <option value="CONFIRMADA">CONFIRMADA</option>
                 <option value="POR RETIRAR">POR RETIRAR</option>
@@ -391,9 +392,14 @@
               <h2>Control de Inventario & Kardex</h2>
               <p>Auditoría y control de movimientos de inventario en SIS-COMER.</p>
             </div>
-            <button class="btn btn-primary" onclick="openBatchStockModal()">
-              <i class="bi bi-plus-square"></i> Ingresar al Inventario
-            </button>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+              <button class="btn btn-primary" onclick="openBatchStockModal()">
+                <i class="bi bi-plus-square"></i> Ingresar al Inventario
+              </button>
+              <button class="btn btn-danger" onclick="confirmResetOperationalData()" style="background: #dc2626; border-color: #dc2626;" title="Elimina movimientos de prueba y pedidos conservando el catálogo militar">
+                <i class="bi bi-trash3-fill"></i> Borrón y Cuenta Nueva (Pruebas)
+              </button>
+            </div>
           </div>
 
           <!-- Banner Alerta de Stock Bajo si existe -->
@@ -724,8 +730,36 @@
                     <label>Número de Cuenta Completo (20 dígitos)</label>
                     <input type="text" id="cfg-tr-account" placeholder="0102-0501-80-0000123456">
                   </div>
+
+                  <h4 style="font-size: 0.85rem; color: #166534; margin-top: 14px; margin-bottom: 8px;"><i class="bi bi-receipt"></i> Configuración Tributaria (IVA)</h4>
+                  <div class="form-row">
+                    <div class="form-group" style="display: flex; align-items: center; gap: 10px; margin-top: 18px;">
+                      <input type="checkbox" id="cfg-apply-iva" style="width: 20px; height: 20px; cursor: pointer;">
+                      <label for="cfg-apply-iva" style="margin: 0; cursor: pointer; font-weight: 600;">¿Aplicar IVA al pedido?</label>
+                    </div>
+                    <div class="form-group">
+                      <label>Alícuota IVA (%)</label>
+                      <input type="number" id="cfg-iva-rate" min="0" max="100" step="1" value="16" placeholder="16">
+                    </div>
+                  </div>
                   <button type="submit" class="btn btn-primary"><i class="bi bi-check-circle"></i> Guardar Cuentas de Pago</button>
                 </form>
+              </div>
+            </div>
+
+            <div class="card" style="border: 1px solid #fecaca; background: #fff5f5;">
+              <div class="card-header" style="background: #fef2f2; border-bottom: 1px solid #fecaca;">
+                <h3 style="color: #b91c1c; font-size: 1rem;"><i class="bi bi-radioactive"></i> Zona de Peligro: Reinicio de Datos de Prueba</h3>
+              </div>
+              <div class="card-body">
+                <p style="color: #7f1d1d; font-size: 0.88rem; margin-bottom: 14px; line-height: 1.5;">
+                  Esta opción ejecuta un <strong>Borrón y Cuenta Nueva</strong> de los datos operativos:
+                  elimina todos los pedidos, auditorías de estados, historial Kardex y clientes registrados de prueba.
+                  <br><strong style="color: #166534;"><i class="bi bi-shield-check"></i> El Catálogo Militar (Precios, Tallas y Fotos), las Tasas BCV y los Ajustes se conservarán 100% INTACTOS.</strong>
+                </p>
+                <button type="button" class="btn btn-danger" onclick="confirmResetOperationalData()" style="background: #dc2626; border-color: #dc2626;">
+                  <i class="bi bi-trash3-fill"></i> Borrón y Cuenta Nueva (Conservar Catálogo)
+                </button>
               </div>
             </div>
           </div>
@@ -798,6 +832,7 @@
         <div class="form-group">
           <label>Estado del Pedido</label>
           <select id="edit_status">
+            <option value="PENDIENTE POR CONFIRMAR PAGO">PENDIENTE POR CONFIRMAR PAGO</option>
             <option value="PENDIENTE POR ATENCIÓN">PENDIENTE POR ATENCIÓN</option>
             <option value="CONFIRMADA">CONFIRMADA</option>
             <option value="POR RETIRAR">POR RETIRAR</option>
@@ -899,9 +934,32 @@
             </label>
           </div>
         </div>
+        <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 12px 14px; margin-bottom: 14px;">
+          <h4 style="font-size: 0.85rem; font-weight: 700; color: #166534; margin: 0 0 8px 0; display: flex; align-items: center; gap: 6px;">
+            <i class="bi bi-file-earmark-text"></i> Ficha Técnica Reglamentaria (Consultas del Bot)
+          </h4>
+          <div class="form-group" style="margin-bottom: 8px;">
+            <label style="font-size: 0.8rem; font-weight: 600; color: #1e293b;">Tipo de Tela / Material Principal</label>
+            <input type="text" id="prod_fabric" placeholder="Ej: Ripstop Militar Antidesgarro (65% Poliéster / 35% Algodón)">
+          </div>
+          <div class="form-row" style="margin-bottom: 8px;">
+            <div class="form-group" style="margin-bottom: 0;">
+              <label style="font-size: 0.8rem; font-weight: 600; color: #1e293b;">Grosor / Gramaje / Calibre</label>
+              <input type="text" id="prod_thickness" placeholder="Ej: 240 g/m² o Cuero 2.2 mm">
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+              <label style="font-size: 0.8rem; font-weight: 600; color: #1e293b;">Botonadura, Cierres y Velcros</label>
+              <input type="text" id="prod_buttons" placeholder="Ej: 5 botones de pasta oculta + velcros mil-spec">
+            </div>
+          </div>
+          <div class="form-group" style="margin-bottom: 0;">
+            <label style="font-size: 0.8rem; font-weight: 600; color: #1e293b;">Durabilidad y Resistencia Operativa</label>
+            <input type="text" id="prod_durability" placeholder="Ej: Alta resistencia a la fricción de campaña (>2.000 horas operativas)">
+          </div>
+        </div>
         <div class="form-group">
-          <label>Descripción Técnica Reglamentaria</label>
-          <textarea id="prod_desc" rows="3" placeholder="Especificaciones, material, acabados reglamentarios..."></textarea>
+          <label>Descripción / Observaciones Adicionales</label>
+          <textarea id="prod_desc" rows="2" placeholder="Especificaciones, material, acabados reglamentarios..."></textarea>
         </div>
         <div class="form-group">
           <label>Palabras Clave de Búsqueda (Opcional, separadas por coma)</label>

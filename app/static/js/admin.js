@@ -278,6 +278,7 @@ function renderOrders(data) {
         <td onclick="event.stopPropagation()">
           <div style="display: flex; gap: 6px; align-items: center;">
             <select style="padding: 4px 6px; font-size: 0.72rem;" onchange="changeOrderStatus(${item.id}, this.value)">
+              <option value="PENDIENTE POR CONFIRMAR PAGO" ${status === 'PENDIENTE POR CONFIRMAR PAGO' ? 'selected' : ''}>PENDIENTE POR CONFIRMAR PAGO</option>
               <option value="PENDIENTE POR ATENCIÓN" ${status === 'PENDIENTE POR ATENCIÓN' ? 'selected' : ''}>PENDIENTE POR ATENCIÓN</option>
               <option value="CONFIRMADA" ${status === 'CONFIRMADA' ? 'selected' : ''}>CONFIRMADA</option>
               <option value="POR RETIRAR" ${status === 'POR RETIRAR' ? 'selected' : ''}>POR RETIRAR</option>
@@ -361,6 +362,19 @@ function openOrderDetail(orderId) {
   const amountUsd = parseFloat(order.amount_usd || order.total_amount || 0);
   const amountVes = parseFloat(order.amount_ves || 0);
 
+  let modalBadgeClass = "pendiente";
+  const stUpper = (order.status || "").toUpperCase();
+  if (stUpper === "CONFIRMADA" || stUpper === "POR RETIRAR") modalBadgeClass = "confirmada";
+  else if (stUpper === "RETIRADA") modalBadgeClass = "retirada";
+  else if (stUpper === "CANCELADA") modalBadgeClass = "cancelada";
+  else if (stUpper === "EN ESPERA POR MANTENIMIENTO") modalBadgeClass = "mantenimiento";
+
+  const ivaAmount = parseFloat(order.iva_amount || 0);
+  const subtotalUsd = (ivaAmount > 0) ? (amountUsd - ivaAmount) : amountUsd;
+  const bcvRate = parseFloat(order.bcv_rate_applied || 0);
+  const ivaVes = (bcvRate > 0) ? (ivaAmount * bcvRate) : 0;
+  const subtotalVes = (bcvRate > 0) ? (subtotalUsd * bcvRate) : (amountVes - ivaVes);
+
   contentEl.innerHTML = `
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">
       <div>
@@ -381,7 +395,7 @@ function openOrderDetail(orderId) {
       </div>
       <div>
         <small class="text-muted" style="display: block; font-weight: 600;">ESTADO DE ATENCIÓN</small>
-        <span class="status-badge confirmada">${order.status}</span>
+        <span class="status-badge ${modalBadgeClass}">${order.status}</span>
       </div>
     </div>
 
@@ -391,20 +405,32 @@ function openOrderDetail(orderId) {
     </div>
 
     <!-- Desglose Financiero -->
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px;">
-      <div>
-        <small style="color: #166534; font-weight: 700; display: block;">TOTAL EN DIVISAS</small>
-        <strong style="font-size: 1.25rem; color: #166534;">$${amountUsd.toFixed(2)} REF</strong>
-      </div>
-      <div>
-        <small style="color: #166534; font-weight: 700; display: block;">EQUIVALENTE EN BOLÍVARES</small>
-        <strong style="font-size: 1.25rem; color: #166534;">Bs. ${amountVes.toLocaleString('es-VE', {minimumFractionDigits: 2})}</strong>
+    <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px;">
+      ${ivaAmount > 0 ? `
+        <div style="display: flex; justify-content: space-between; font-size: 0.85rem; color: #166534; margin-bottom: 4px;">
+          <span>Subtotal Neto:</span>
+          <strong>$${subtotalUsd.toFixed(2)} Ref (Bs. ${subtotalVes.toLocaleString('es-VE', {minimumFractionDigits: 2})})</strong>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 0.85rem; color: #166534; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px dashed #86efac;">
+          <span>IVA (16%):</span>
+          <strong>$${ivaAmount.toFixed(2)} Ref (Bs. ${ivaVes.toLocaleString('es-VE', {minimumFractionDigits: 2})})</strong>
+        </div>
+      ` : ''}
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+        <div>
+          <small style="color: #166534; font-weight: 700; display: block;">TOTAL EN DIVISAS</small>
+          <strong style="font-size: 1.25rem; color: #166534;">$${amountUsd.toFixed(2)} REF</strong>
+        </div>
+        <div>
+          <small style="color: #166534; font-weight: 700; display: block;">EQUIVALENTE EN BOLÍVARES</small>
+          <strong style="font-size: 1.25rem; color: #166534;">Bs. ${amountVes.toLocaleString('es-VE', {minimumFractionDigits: 2})}</strong>
+        </div>
       </div>
     </div>
 
-    <!-- Panel de Auditoría Comprobante OCR -->
+    <!-- Panel de Auditoría Comprobante OCR & Datos Manuales -->
     <div class="ocr-receipt-box">
-      <h4><i class="bi bi-receipt-cutoff"></i> Verificación y Comprobante Bancario (OCR)</h4>
+      <h4><i class="bi bi-receipt-cutoff"></i> Verificación y Comprobante Bancario</h4>
       <div class="ocr-field-row">
         <span>Banco Emisor:</span>
         <strong>${order.receipt_bank || 'NO REGISTRADO'}</strong>
@@ -421,11 +447,25 @@ function openOrderDetail(orderId) {
         <span>Tasa BCV Aplicada en Pago:</span>
         <strong>Bs. ${order.bcv_rate_applied ? order.bcv_rate_applied.toFixed(4) : '-'} / $</strong>
       </div>
+      ${order.manual_payment_data ? `
+        <div style="margin-top: 8px; padding: 8px 10px; background: #fefce8; border: 1px solid #fef08a; border-radius: 6px; font-size: 0.8rem; color: #854d0e;">
+          <strong><i class="bi bi-pencil-square"></i> Datos reportados por el cliente (WhatsApp):</strong><br>
+          ${order.manual_payment_data}
+        </div>
+      ` : ''}
       ${order.ocr_raw_text ? `
         <div style="margin-top: 8px; font-size: 0.78rem; background: #ffffff; padding: 6px 10px; border-radius: 4px; border: 1px solid #e2e8f0; color: #64748b; font-family: monospace; white-space: pre-wrap; max-height: 80px; overflow-y: auto;">
           <strong>Texto extraído por OCR:</strong><br>${order.ocr_raw_text}
         </div>
       ` : ''}
+    </div>
+
+    <!-- Historial de Estados (Auditoría) -->
+    <div style="margin-top: 14px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 16px;">
+      <h4 style="font-size: 0.88rem; color: #0f172a; margin-bottom: 8px;"><i class="bi bi-clock-history"></i> Historial de Cambios de Estado:</h4>
+      <div id="order-history-timeline-${order.id}" style="font-size: 0.8rem; color: #64748b;">
+        Cargando historial de auditoría...
+      </div>
     </div>
 
     <!-- Cita de Retiro -->
@@ -441,6 +481,38 @@ function openOrderDetail(orderId) {
   `;
 
   document.getElementById("order-detail-modal").classList.add("show");
+  fetchOrderHistory(order.id);
+}
+
+async function fetchOrderHistory(orderId) {
+  const container = document.getElementById(`order-history-timeline-${orderId}`);
+  if (!container) return;
+  try {
+    const res = await fetch(`/api/orders/${orderId}/history`);
+    if (!res.ok) {
+      container.innerHTML = `<span class="text-muted">No se pudo cargar el historial.</span>`;
+      return;
+    }
+    const history = await res.json();
+    if (!history || history.length === 0) {
+      container.innerHTML = `<span class="text-muted">Sin cambios de estado adicionales registrados.</span>`;
+      return;
+    }
+    container.innerHTML = history.map(h => `
+      <div style="padding: 6px 0; border-bottom: 1px dashed #f1f5f9; display: flex; justify-content: space-between; align-items: center;">
+        <div>
+          <span style="font-weight: 700; color: #1e293b;">${h.previous_status || 'INICIAL'} &rarr; ${h.new_status}</span>
+          ${h.notes ? `<br><small style="color: #64748b;">${h.notes}</small>` : ''}
+        </div>
+        <div style="text-align: right; font-size: 0.72rem; color: #94a3b8;">
+          <span style="font-weight: 600; color: #0284c7;">${h.changed_by || 'SISTEMA'}</span><br>
+          ${formatDateTimeDMY(h.created_at)}
+        </div>
+      </div>
+    `).join("");
+  } catch (e) {
+    container.innerHTML = `<span class="text-muted">Error cargando historial.</span>`;
+  }
 }
 
 function closeOrderModal() {
@@ -994,6 +1066,10 @@ function openProductModal() {
   document.getElementById("product-form").reset();
   document.getElementById("prod_id").value = "";
   toggleSizeOptions(0);
+  if (document.getElementById("prod_fabric")) document.getElementById("prod_fabric").value = "";
+  if (document.getElementById("prod_thickness")) document.getElementById("prod_thickness").value = "";
+  if (document.getElementById("prod_buttons")) document.getElementById("prod_buttons").value = "";
+  if (document.getElementById("prod_durability")) document.getElementById("prod_durability").value = "";
   document.getElementById("product-modal").classList.add("show");
 }
 
@@ -1017,6 +1093,12 @@ function editProduct(id) {
   document.getElementById("prod_stock").value = p.stock;
   document.getElementById("prod_image").value = p.image_url || "";
   document.getElementById("prod_desc").value = p.description || "";
+  
+  if (document.getElementById("prod_fabric")) document.getElementById("prod_fabric").value = p.fabric || "";
+  if (document.getElementById("prod_thickness")) document.getElementById("prod_thickness").value = p.thickness_weight || "";
+  if (document.getElementById("prod_buttons")) document.getElementById("prod_buttons").value = p.buttons_closures || "";
+  if (document.getElementById("prod_durability")) document.getElementById("prod_durability").value = p.durability || "";
+
   const kwEl = document.getElementById("prod_keywords");
   if (kwEl) kwEl.value = p.keywords || "";
 
@@ -1038,6 +1120,10 @@ async function saveProduct(e) {
     stock: parseInt(document.getElementById("prod_stock").value),
     image_url: document.getElementById("prod_image").value || "/static/images/placeholder.png",
     description: document.getElementById("prod_desc").value,
+    fabric: document.getElementById("prod_fabric") ? document.getElementById("prod_fabric").value : "",
+    thickness_weight: document.getElementById("prod_thickness") ? document.getElementById("prod_thickness").value : "",
+    buttons_closures: document.getElementById("prod_buttons") ? document.getElementById("prod_buttons").value : "",
+    durability: document.getElementById("prod_durability") ? document.getElementById("prod_durability").value : "",
     keywords: kwEl ? kwEl.value : "",
     updated_by: "ADMIN"
   };
@@ -1196,6 +1282,12 @@ async function loadConfig() {
     if (cfg.transfer_bank && document.getElementById("cfg-tr-bank")) document.getElementById("cfg-tr-bank").value = cfg.transfer_bank;
     if (cfg.transfer_holder && document.getElementById("cfg-tr-holder")) document.getElementById("cfg-tr-holder").value = cfg.transfer_holder;
     if (cfg.transfer_account && document.getElementById("cfg-tr-account")) document.getElementById("cfg-tr-account").value = cfg.transfer_account;
+    if (document.getElementById("cfg-apply-iva")) {
+      document.getElementById("cfg-apply-iva").checked = (cfg.apply_iva === "1");
+    }
+    if (cfg.iva_rate && document.getElementById("cfg-iva-rate")) {
+      document.getElementById("cfg-iva-rate").value = cfg.iva_rate;
+    }
   } catch (err) {
     console.error("Error cargando configuración:", err);
   }
@@ -1243,7 +1335,9 @@ async function saveConfig(e) {
     pagomovil_id: document.getElementById("cfg-pm-id")?.value,
     transfer_bank: document.getElementById("cfg-tr-bank")?.value,
     transfer_holder: document.getElementById("cfg-tr-holder")?.value,
-    transfer_account: document.getElementById("cfg-tr-account")?.value
+    transfer_account: document.getElementById("cfg-tr-account")?.value,
+    apply_iva: document.getElementById("cfg-apply-iva") ? (document.getElementById("cfg-apply-iva").checked ? "1" : "0") : undefined,
+    iva_rate: document.getElementById("cfg-iva-rate")?.value
   };
 
   try {
@@ -1571,5 +1665,98 @@ function copyText(str) {
       });
     }
   });
+}
+
+// ----------------- BORRÓN Y CUENTA NUEVA (DATOS OPERATIVOS) -----------------
+async function confirmResetOperationalData() {
+  if (!window.Swal) {
+    if (!confirm("⚠️ ATENCIÓN: Esta acción es irreversible. Se eliminarán pedidos, movimientos Kardex y clientes de prueba. El Catálogo Militar quedará intacto. ¿Continuar?")) return;
+    const typed = prompt("Escriba 'REINICIAR' para confirmar:");
+    if (typed !== "REINICIAR") {
+      alert("Operación cancelada. No coincidió la palabra.");
+      return;
+    }
+    executeResetOperationalData();
+    return;
+  }
+
+  // Paso 1: Advertencia inicial
+  const step1 = await Swal.fire({
+    title: '⚠️ ¿REINICIAR DATOS DE PRUEBA?',
+    html: `
+      <div style="text-align: left; font-size: 0.9rem; color: #334155;">
+        <p><strong>Esta acción es irreversible y eliminará:</strong></p>
+        <ul style="padding-left: 20px; color: #dc2626; margin-bottom: 12px;">
+          <li>Todos los pedidos y citas registrados (Orders).</li>
+          <li>Todo el historial de auditoría de estados.</li>
+          <li>Todo el historial de movimientos de inventario Kardex.</li>
+          <li>Todos los clientes de prueba registrados.</li>
+          <li>La lista de espera de productos.</li>
+        </ul>
+        <p style="color: #166534; font-weight: 700;">
+          <i class="bi bi-shield-check"></i> El Catálogo Militar (Productos y Precios), Tasas BCV y Configuraciones se conservarán 100% INTACTOS.
+        </p>
+      </div>
+    `,
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonColor: '#dc2626',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: 'Sí, continuar al paso final',
+    cancelButtonText: 'Cancelar',
+    reverseButtons: true,
+    customClass: { popup: 'swal2-custom-popup' }
+  });
+
+  if (!step1.isConfirmed) return;
+
+  // Paso 2: Exigir escribir "REINICIAR"
+  const step2 = await Swal.fire({
+    title: 'Confirmación de Seguridad',
+    text: 'Escriba la palabra REINICIAR en mayúsculas para proceder con el borrón y cuenta nueva:',
+    input: 'text',
+    inputPlaceholder: 'REINICIAR',
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonColor: '#dc2626',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: 'Confirmar y Reiniciar',
+    cancelButtonText: 'Cancelar',
+    reverseButtons: true,
+    customClass: { popup: 'swal2-custom-popup' },
+    inputValidator: (val) => {
+      if (!val || val.trim() !== "REINICIAR") {
+        return 'Debe escribir exactamente la palabra "REINICIAR"';
+      }
+    }
+  });
+
+  if (step2.isConfirmed) {
+    executeResetOperationalData();
+  }
+}
+
+async function executeResetOperationalData() {
+  try {
+    const res = await fetch("/api/admin/reset-operational-data", { method: "POST" });
+    const data = await res.json();
+    if (res.ok && data.status === "success") {
+      notifySuccess(
+        "Borrón y Cuenta Nueva Completado",
+        `Se eliminaron ${data.deleted_orders} pedidos, ${data.deleted_kardex_movements} movimientos Kardex y ${data.deleted_clients} clientes. El Catálogo Militar se mantuvo 100% intacto.`
+      );
+      // Recargar todas las vistas y métricas
+      loadOrders();
+      loadInventoryKardex();
+      loadWaitlist();
+      loadFinancialMetrics();
+      loadDailyReport();
+      loadLowStockAlerts();
+    } else {
+      notifyError("Error al reiniciar datos operativos", data.message || "Error desconocido.");
+    }
+  } catch (err) {
+    notifyError("Error de conexión al reiniciar", err.message);
+  }
 }
 
