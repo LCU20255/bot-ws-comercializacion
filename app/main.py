@@ -248,16 +248,6 @@ def admin_page():
         html_content = f.read()
     return HTMLResponse(content=html_content)
 
-@app.get("/flowchart", response_class=HTMLResponse)
-def flowchart_page():
-    template_path = BASE_DIR / "app" / "templates" / "flowchart.html"
-    if not template_path.exists():
-        template_path = BASE_DIR / "flowchart.html"
-    if not template_path.exists():
-        return HTMLResponse("<h1>Flujograma no encontrado</h1>", status_code=404)
-    with open(template_path, "r", encoding="utf-8") as f:
-        html_content = f.read()
-    return HTMLResponse(content=html_content)
 
 # ----------------- FACTURACIÓN / COMPROBANTE OFICIAL DE ORDEN DE COMPRA CIT -----------------
 import base64
