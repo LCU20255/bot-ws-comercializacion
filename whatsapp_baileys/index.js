@@ -224,10 +224,15 @@ async function connectToWhatsApp() {
         }
       }
 
+      const isAudio = !!messageContent?.audioMessage;
+      if (isAudio && !text) {
+        text = "[NOTA_DE_VOZ]";
+      }
+
       text = text.trim();
       if (!text && !imageBase64) continue;
 
-      console.log(`📩 [WhatsApp Inbound] De: +${phone} (JID: ${remoteJid}) | Mensaje: "${text}" | Tiene Imagen: ${!!imageBase64}`);
+      console.log(`📩 [WhatsApp Inbound] De: +${phone} (JID: ${remoteJid}) | Mensaje: "${text}" | Tiene Imagen: ${!!imageBase64} | Audio: ${isAudio}`);
 
       try {
         // Enviar a nuestro motor de IA / NLU en Python
@@ -238,7 +243,7 @@ async function connectToWhatsApp() {
           image_base64: imageBase64
         });
 
-        const { reply, image_url } = response.data;
+        const { reply, image_url, messages } = response.data;
         console.log(`🤖 [Bot Respuesta] Para: +${phone}`);
 
         // Enviar respuesta con o sin imagen
@@ -264,8 +269,18 @@ async function connectToWhatsApp() {
           }
         }
 
-        // Si no hay imagen o falló la carga de imagen, enviar texto
-        await sock.sendMessage(remoteJid, { text: reply });
+        // Si la respuesta contiene mensajes múltiples individuales (ej: resumen, pago móvil, transferencia por separado)
+        if (Array.isArray(messages) && messages.length > 0) {
+          for (const m of messages) {
+            if (m && m.trim()) {
+              await sock.sendMessage(remoteJid, { text: m.trim() });
+              await new Promise(r => setTimeout(r, 600)); // pausa natural de 600ms entre mensajes
+            }
+          }
+        } else if (reply && reply.trim()) {
+          // Si no hay array de mensajes, enviar mensaje individual
+          await sock.sendMessage(remoteJid, { text: reply.trim() });
+        }
       } catch (err) {
         console.error(`Error procesando mensaje para +${phone}:`, err.message);
         await sock.sendMessage(remoteJid, {

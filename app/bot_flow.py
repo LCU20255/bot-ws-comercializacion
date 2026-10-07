@@ -38,6 +38,7 @@ def get_session(phone: str) -> Dict[str, Any]:
         user_sessions[phone] = {
             "state": "CATALOG" if is_reg else "REGISTER_NAME",  # Si ya existe en BD va a catálogo, si no pide datos
             "is_registered": is_reg,
+            "welcome_sent": is_reg,    # Flag para saber si ya se le envió el saludo inicial
             "cart": [],                # [{"product_id", "name", "qty", "unit_price", "subtotal", "size"}]
             "client_name": existing_client.get("name") if is_reg else None,       # MAYÚSCULAS
             "cedula": existing_client.get("cedula") if is_reg else None,            # MAYÚSCULAS
@@ -68,6 +69,7 @@ def reset_session(phone: str, keep_registration: bool = True):
     user_sessions[phone] = {
         "state": "CATALOG" if is_reg else "REGISTER_NAME",
         "is_registered": is_reg,
+        "welcome_sent": is_reg,
         "cart": [],
         "client_name": name if is_reg else None,
         "cedula": ci if is_reg else None,
@@ -132,32 +134,32 @@ class BotFlowManager:
         matched_product = analysis["matched_product"]
         extracted = analysis["extracted_data"]
 
+        # Detección de notas de voz enviadas por el usuario
+        if clean_text in ["[NOTA_DE_VOZ]", "NOTA_DE_VOZ", "[AUDIO]"] or analysis.get("intent") == "VOICE_NOTE":
+            adv_phone = config.get("advisor_phone") or config.get("pagomovil_phone") or "0412-1234567"
+            clean_digits = re.sub(r'\D', '', adv_phone)
+            wa_digits = f"58{clean_digits[1:]}" if clean_digits.startswith("0") else (clean_digits if clean_digits.startswith("58") else f"58{clean_digits}")
+            return {
+                "reply": (
+                    "🎙️ *Nota de voz recibida.*\n\n"
+                    "En este momento nuestro asistente virtual procesa solicitudes por *mensaje de texto escrito* y *fotos de comprobantes*.\n\n"
+                    "✍️ *Por favor, escriba su requerimiento o mensaje en texto* para poder atenderle de inmediato. 🙏\n\n"
+                    "[ 1️⃣ ] 👨‍💼 *O escriba 1 para comunicarse con un asesor comercial humano.*"
+                ),
+                "image_url": None,
+                "state": session.get("state", "CATALOG")
+            }
+
         # Si el usuario solicita reiniciar su registro o empezar de cero
         if clean_text.lower() in ["reset registro", "reiniciar registro", "cambiar datos", "nuevo registro"]:
             reset_session(phone, keep_registration=False)
             session = get_session(phone)
             session["is_registered"] = False
+            session["welcome_sent"] = True
             session["state"] = "REGISTER_NAME"
             return self._prompt_initial_registration(session, phone)
 
-        # Saludo prioritario: si el cliente no está registrado, saludar cordialmente y pedir Nombre
-        if analysis["intent"] == "GREETING" and not session.get("is_registered"):
-            session["state"] = "REGISTER_NAME"
-            return self._prompt_initial_registration(session, phone)
-
-        # Saludo prioritario: si el cliente ya está registrado, saludar por su nombre y mostrar catálogo
-        if analysis["intent"] == "GREETING" and session.get("is_registered"):
-            client_name = session.get("client_name", "Cliente")
-            session["state"] = "CATALOG"
-            catalog_resp = self._build_catalog_menu(session, is_off_hours=is_off_hours)
-            greeting_prefix = (
-                f"👋 *¡Hola, {client_name}! ¿Cómo estás?*\n"
-                f"Bienvenido nuevamente a *SIS-COMER* (*Complejo Industrial Tiuna*).\n\n"
-            )
-            catalog_resp["reply"] = greeting_prefix + catalog_resp["reply"]
-            return catalog_resp
-
-        # 3. DETECCIÓN PRIORITARIA DE INCONFORMIDAD / QUEJAS / MENSAJES NEGATIVOS
+        # 2.5 DETECCIÓN PRIORITARIA DE INCONFORMIDAD / QUEJAS / MENSAJES NEGATIVOS
         if analysis["intent"] == "NEGATIVE_SENTIMENT":
             adv_phone = config.get("advisor_phone") or config.get("pagomovil_phone") or "0412-1234567"
             clean_digits = re.sub(r'\D', '', adv_phone)
@@ -179,6 +181,53 @@ class BotFlowManager:
                 "image_url": None,
                 "state": "WAITING_ADVISOR"
             }
+
+        # Saludo prioritario: si el cliente no está registrado
+        if not session.get("is_registered"):
+            # 1. Verificar si ya existe en base de datos por teléfono
+            existing_client = get_client_by_phone(phone)
+            if existing_client and existing_client.get("name") and existing_client.get("cedula"):
+                session["client_name"] = existing_client["name"]
+                session["cedula"] = existing_client["cedula"]
+                session["contact_phone"] = existing_client.get("phone") or phone
+                session["is_registered"] = True
+                session["welcome_sent"] = True
+            else:
+                # 2. O si envió todos sus datos en un solo bloque (ej: "Soy Juan Pérez CI 15432123 tlf 04143334455")
+                self._try_extract_all_registration_data(clean_text, session, phone)
+                if session.get("client_name") and session.get("cedula") and session.get("contact_phone"):
+                    session["is_registered"] = True
+                    session["welcome_sent"] = True
+                    upsert_client(session["client_name"], session["cedula"], session["contact_phone"])
+                    welcome_header = (
+                        f"✅ *¡Registro completado exitosamente!*\n\n"
+                        f"👋 *Bienvenido(a), {session['client_name']}*\n"
+                        f"🪪 *Cédula:* {session['cedula']}\n"
+                        f"📱 *Teléfono:* {session['contact_phone']}\n"
+                        "──────────────────────\n"
+                    )
+                    session["state"] = "CATALOG"
+                    catalog_resp = self._build_catalog_menu(session, is_off_hours=is_off_hours)
+                    catalog_resp["reply"] = welcome_header + catalog_resp["reply"]
+                    return catalog_resp
+
+            # Si aún no se le ha dado la bienvenida oficial (cualquier mensaje inicial: ".", "aguacate", "hola", etc.)
+            if not session.get("is_registered") and not session.get("welcome_sent"):
+                session["welcome_sent"] = True
+                session["state"] = "REGISTER_NAME"
+                return self._prompt_initial_registration(session, phone)
+
+        # Saludo prioritario: si el cliente ya está registrado, saludar por su nombre y mostrar catálogo de inmediato
+        if analysis["intent"] == "GREETING" and session.get("is_registered"):
+            client_name = session.get("client_name", "Cliente")
+            session["state"] = "CATALOG"
+            catalog_resp = self._build_catalog_menu(session, is_off_hours=is_off_hours, skip_header=True)
+            greeting_prefix = (
+                f"👋 *¡Hola, {client_name}! ¿Cómo estás?*\n"
+                f"Bienvenido nuevamente a *SIS-COMER* (*Complejo Industrial Tiuna*).\n\n"
+            )
+            catalog_resp["reply"] = greeting_prefix + catalog_resp["reply"]
+            return catalog_resp
 
         # Si el usuario está en espera de asesor
         if current_state == "WAITING_ADVISOR":
@@ -357,23 +406,33 @@ class BotFlowManager:
                 catalog_resp["reply"] = welcome_header + catalog_resp["reply"]
                 return catalog_resp
 
-            greeting_words = {
+            # Palabras conversacionales, de charlar, de productos y de cortesía que NO son nombres
+            NON_NAME_WORDS = {
                 "HOLA", "BUENOS", "BUENAS", "BUENO", "BUEN", "DIAS", "DÍAS", "TARDES", "NOCHES",
                 "SALUDOS", "SALUDO", "EPALE", "ÉPALE", "CORDIAL", "ESTIMADO", "ESTIMADA",
                 "DIA", "DÍA", "INICIO", "MENU", "MENÚ", "0", "EMPEZAR", "START", "RESET", "REINICIAR",
                 "POR", "FAVOR", "GRACIAS", "OK", "VALE", "LISTO", "COMO", "CÓMO", "ESTAS", "ESTÁS",
                 "ESTA", "ESTÁ", "USTED", "TU", "TÚ", "QUE", "QUÉ", "TAL", "AMIGO", "AMIGA", "HERMANO",
-                "HERMANA", "COMPAÑERO", "COMPAÑERA", "CAMARADA"
+                "PERO", "DIGO", "DICE", "DECIR", "DIJE", "HAHAHA", "JAJAJA", "JAJA", "HAHA", "JEJE", "XD",
+                "PUES", "NADA", "ALGO", "AQUI", "AQUÍ", "ALLI", "ALLÍ", "ALLA", "ALLÁ",
+                "MENSAJE", "ENVIAS", "ENVÍAS", "ENVIA", "ENVÍO", "ENVIO", "MANDAS", "MANDE", "HORA", "HORAS",
+                "TIEMPO", "CUANDO", "CUÁNDO", "DONDE", "DÓNDE", "PORQUE", "PORQUÉ", "ENTONCES", "SABES", "SABER",
+                "TIENDA", "AGUACATE", "MANZANA", "CARRO", "CASA", "PANA", "BROTHER", "COMPA", "CHAMO",
+                "PATRIOTA", "TIUNA", "CHAQUETA", "CHAQUETAS", "GORRA", "GORRAS", "BOTA", "BOTAS",
+                "MILITAR", "MILITARES", "PARCHE", "PARCHES", "TACTICA", "TACTICO", "TACTICAS", "TACTICOS",
+                "CAMPAÑA", "CAMPANA", "CAMUFLAJE", "VERDE", "NEGRO", "AZUL", "TALLA", "TALLAS",
+                "COMPRAR", "QUIERO", "PRECIO", "PRECIOS", "COSTO", "COSTOS", "CUANTO", "CUÁNTO",
+                "VALE", "TIENEN", "HAY", "STOCK", "DISPONIBLE", "CATALOGO", "CATÁLOGO", "PEDIDO",
+                "ASESOR", "HUMANO", "AYUDA", "OPCION", "OPCIÓN", "UNIDADES", "CANTIDAD", "DESPACHO",
+                "DESDE", "HASTA", "PARTIR", "APARTIR"
             }
             text_clean_words = [w for w in re.sub(r'[^\w\s]', '', clean_text).upper().split() if w]
 
             # Paso 1: Solicitar Nombre y Apellido
             if current_state in ["REGISTER_NAME", "INIT"]:
-                # Si el mensaje es solo un saludo o cortesía
-                if not text_clean_words or all(w in greeting_words for w in text_clean_words) or analysis.get("intent") == "GREETING":
-                    session["state"] = "REGISTER_NAME"
-                    return self._prompt_initial_registration(session, phone)
-
+                # Si el mensaje contiene signos de pregunta o risas conversacionales
+                has_conversational_cues = bool(re.search(r'[?¿]|(jaj|hah|jeje|xd)', clean_text.lower()))
+                
                 # Limpiar prefijos de presentación ("Soy Carlos Perez", "Me llamo Juan", etc.)
                 clean_name = clean_text
                 clean_name = re.sub(r'^(?:¡?hola!?\s*)?(?:buenas\s*(?:tardes|dias|días|noches)?\s*,?\s*)?(?:soy|me\s+llamo|mi\s+nombre\s+es|yo\s+soy)\s+', '', clean_name, flags=re.IGNORECASE)
@@ -382,16 +441,11 @@ class BotFlowManager:
                 name_tokens = [w for w in re.findall(r'[a-zA-ZáéíóúÁÉÍÓÚñÑ]+', clean_name) if len(w) >= 2]
                 valid_name_words = [
                     w for w in name_tokens 
-                    if w.upper() not in greeting_words and w.upper() not in {
-                        "PATRIOTA", "TIUNA", "CHAQUETA", "CHAQUETAS", "GORRA", "GORRAS", "BOTA", "BOTAS",
-                        "MILITAR", "MILITARES", "PARCHE", "PARCHES", "TACTICA", "TACTICO", "TACTICAS", "TACTICOS",
-                        "CAMPAÑA", "CAMPANA", "CAMUFLAJE", "VERDE", "NEGRO", "AZUL", "TALLA", "TALLAS",
-                        "COMPRAR", "QUIERO", "PRECIO", "PRECIOS", "COSTO", "COSTOS", "CUANTO", "CUÁNTO",
-                        "VALE", "TIENEN", "HAY", "STOCK", "DISPONIBLE", "CATALOGO", "CATÁLOGO", "PEDIDO",
-                        "ASESOR", "HUMANO", "AYUDA", "OPCION", "OPCIÓN", "UNIDADES", "CANTIDAD", "DESPACHO"
-                    } and not any(c.isdigit() for c in w)
+                    if w.upper() not in NON_NAME_WORDS and not any(c.isdigit() for c in w)
                 ]
-                if valid_name_words:
+
+                # Se requiere que sean al menos dos nombres/apellidos válidos para evitar capturar frases
+                if not has_conversational_cues and len(valid_name_words) >= 2:
                     session["client_name"] = " ".join(valid_name_words[:4]).title()
                     session["state"] = "REGISTER_CEDULA"
                     return {
@@ -405,7 +459,14 @@ class BotFlowManager:
                     }
                 else:
                     session["state"] = "REGISTER_NAME"
-                    return self._prompt_initial_registration(session, phone)
+                    return {
+                        "reply": (
+                            "👋 Para iniciar formalmente su registro y atención, por favor indíquenos su *Nombre y Apellido* completo:\n"
+                            "*(Por ejemplo: Carlos Pérez o María Rodríguez)*"
+                        ),
+                        "image_url": None,
+                        "state": "REGISTER_NAME"
+                    }
 
             # Paso 2: Solicitar Cédula de Identidad
             elif current_state == "REGISTER_CEDULA":
@@ -416,7 +477,7 @@ class BotFlowManager:
                     return {
                         "reply": (
                             f"🪪 Cédula registrada: *{session['cedula']}*.\n\n"
-                            "📱 *¿Me indicas tu número telefónico móvil de contacto?*\n"
+                            "📱 *¿Me indicas tu número de teléfono de contacto?*\n"
                             "*(Ejemplo: 0414-1234567 o 0412-1234567)*"
                         ),
                         "image_url": None,
@@ -943,27 +1004,73 @@ class BotFlowManager:
             }
 
         # -------------------------------------------------------------
-        # ESTADO 5: ESPERANDO PAGO / COMPROBANTE (OCR & Tasa Histórica)
+        # ESTADO 5: ESPERANDO PAGO / COMPROBANTE
         # -------------------------------------------------------------
         elif current_state == "AWAITING_PAYMENT":
-            # El usuario puede ingresar datos de pago por texto (ej: "Pago movil banco de venezuela ref 1234567 monto 1500 bs fecha ayer")
-            # O enviar la imagen directamente (procesada en process_receipt_image)
+            if clean_text in ["0", "menu", "menú", "cancelar"]:
+                reset_session(phone, keep_registration=True)
+                return self._build_catalog_menu(session, is_off_hours=is_off_hours)
+
+            # El usuario puede ingresar datos de pago por texto (ej: "Pago movil banco mercantil ref 1234567 monto 1500 bs")
             text_receipt = ReceiptOCRService.parse_text_fields(clean_text)
             if text_receipt["reference"] != "S/REF" or text_receipt["bank"] != "DESCONOCIDO" or text_receipt["amount"] > 0:
                 session["manual_payment_data"] = clean_text
                 return self._apply_receipt_to_session(session, text_receipt)
 
-            # Si no detectó formato de pago, reiterar instrucción de subir comprobante
+            # Si no detectó formato de pago, reiterar instrucción de subir foto o escribir datos
             return {
                 "reply": (
-                    "⚠️ *COMPROBANTE REQUERIDO*\n\n"
-                    "Para continuar y coordinar su fecha de retiro, es obligatorio consignar el comprobante de pago previo.\n\n"
-                    "📸 *Por favor adjunte la foto/captura de su pago móvil o transferencia*, o escriba el mensaje con:\n"
-                    "• *Banco*\n• *Nro. de Referencia*\n• *Monto cancelado*\n• *Fecha del pago*"
+                    "📸 *CONSIGNACIÓN DE COMPROBANTE*\n\n"
+                    "Para coordinar la entrega y fecha de retiro, por favor *adjunte la foto o captura de su pago móvil o transferencia*.\n\n"
+                    "✍️ *O si lo prefiere, escriba los datos de su operación:* Banco emisor, Nro. de Referencia y Monto cancelado.\n"
+                    "*(Escriba 0 si desea volver al menú)*"
                 ),
                 "image_url": None,
                 "state": "AWAITING_PAYMENT"
             }
+
+        # -------------------------------------------------------------
+        # ESTADO 5.1: CORROBORACIÓN DE DATOS DE PAGO (Híbrido)
+        # -------------------------------------------------------------
+        elif current_state == "CONFIRMING_PAYMENT_DATA":
+            if clean_text in ["0", "menu", "menú", "cancelar"]:
+                reset_session(phone, keep_registration=True)
+                return self._build_catalog_menu(session, is_off_hours=is_off_hours)
+
+            text_receipt = ReceiptOCRService.parse_text_fields(clean_text)
+            pending_data = session.get("pending_receipt_data", {})
+
+            # Extraer referencia: del texto analizado, o cualquier secuencia de 4 a 16 dígitos en el texto del cliente
+            final_ref = text_receipt["reference"] if text_receipt["reference"] != "S/REF" else pending_data.get("reference", "S/REF")
+            if final_ref == "S/REF":
+                digits_match = re.search(r'\b\d{4,16}\b', clean_text)
+                if digits_match:
+                    final_ref = digits_match.group(0)
+                else:
+                    final_ref = clean_text.strip()[:20]
+
+            final_bank = text_receipt["bank"] if text_receipt["bank"] != "DESCONOCIDO" else pending_data.get("bank", "BANCO NACIONAL")
+            if final_bank == "DESCONOCIDO":
+                final_bank = "BANCO NACIONAL"
+
+            final_amount = text_receipt["amount"] if text_receipt["amount"] > 0 else pending_data.get("amount", 0.0)
+            final_date = text_receipt["payment_date"] if text_receipt.get("date_detected") else pending_data.get("payment_date", now_vet_date_str())
+
+            combined_receipt = {
+                "bank": final_bank,
+                "reference": final_ref,
+                "amount": final_amount,
+                "currency": text_receipt.get("currency", "VES"),
+                "payment_date": final_date,
+                "date_detected": True,
+                "payer_id": text_receipt.get("payer_id") or pending_data.get("payer_id"),
+                "concept": text_receipt.get("concept") or pending_data.get("concept"),
+                "raw_text": (pending_data.get("raw_text", "") + "\nReportado por cliente: " + clean_text).strip(),
+                "ocr_ok": True
+            }
+            session["manual_payment_data"] = clean_text
+            session.pop("pending_receipt_data", None)
+            return self._apply_receipt_to_session(session, combined_receipt)
 
         # -------------------------------------------------------------
         # ESTADO 6: AGENDAMIENTO DE RETIRO POST-PAGO (Fecha y Hora con Botones)
@@ -1080,19 +1187,33 @@ class BotFlowManager:
     # -------------------------------------------------------------
     def process_receipt_image(self, phone: str, image_path: str, caption: str = "") -> Dict[str, Any]:
         """
-        Recibe la imagen descargada por Baileys, ejecuta OCR venezolano,
-        DESTRUYE inmediatamente el archivo temporal del disco, y avanza el flujo.
+        Recibe la imagen del comprobante, ejecuta análisis venezolano,
+        purga inmediatamente el archivo de disco, y avanza el flujo sin tecnicismos.
         """
         session = get_session(phone)
         parsed = ReceiptOCRService.process_and_destroy_receipt(image_path, simulated_hint_text=caption)
         
-        logger.info(f"OCR procesado para {phone}: Banco={parsed['bank']}, Ref={parsed['reference']}, Monto={parsed['amount']}, Fecha={parsed['payment_date']}")
+        logger.info(f"Comprobante recibido para {phone}: Banco={parsed['bank']}, Ref={parsed['reference']}, Monto={parsed['amount']}")
         
-        # Si el usuario no estaba en AWAITING_PAYMENT pero ya tiene un carrito, asumir que está pagando
         if session["state"] != "AWAITING_PAYMENT" and session["cart"]:
             session["state"] = "AWAITING_PAYMENT"
 
-        return self._apply_receipt_to_session(session, parsed)
+        # Si el análisis extrajo exitosamente tanto la referencia como el banco
+        if parsed.get("reference") != "S/REF" and parsed.get("bank") != "DESCONOCIDO":
+            return self._apply_receipt_to_session(session, parsed)
+
+        # Si requiere corroborar número de referencia o banco emisor (sin tecnicismos al cliente)
+        session["pending_receipt_data"] = parsed
+        session["state"] = "CONFIRMING_PAYMENT_DATA"
+        return {
+            "reply": (
+                "📸 *Hemos recibido la imagen de su comprobante.*\n\n"
+                "Para garantizar la rápida y exacta conciliación de su pago, por favor facilítenos a continuación el *número de referencia* y el *banco emisor* desde el que realizó la operación:\n"
+                "*(Por ejemplo: Ref 12345678 Banco Mercantil)*"
+            ),
+            "image_url": None,
+            "state": "CONFIRMING_PAYMENT_DATA"
+        }
 
     def _apply_receipt_to_session(self, session: Dict[str, Any], receipt_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -1309,7 +1430,9 @@ class BotFlowManager:
             "SALUDOS", "SALUDO", "EPALE", "ÉPALE", "CORDIAL", "ESTIMADO", "ESTIMADA",
             "DIA", "DÍA", "INICIO", "MENU", "MENÚ", "0", "AYUDA", "POR", "FAVOR", "GRACIAS",
             "COMO", "CÓMO", "ESTAS", "ESTÁS", "ESTA", "ESTÁ", "USTED", "TU", "TÚ", "QUE", "QUÉ", "TAL",
-            "AMIGO", "AMIGA", "HERMANO", "HERMANA"
+            "AMIGO", "AMIGA", "HERMANO", "HERMANA",
+            "SOY", "ME", "LLAMO", "MI", "NOMBRE", "ES", "YO",
+            "CI", "CEDULA", "CÉDULA", "TLF", "TELEFONO", "TELÉFONO", "CEL", "CELULAR", "WHATSAPP", "NUMERO", "NÚMERO"
         }
         product_blacklist = {
             "PATRIOTA", "TIUNA", "CHAQUETA", "CHAQUETAS", "GORRA", "GORRAS", "BOTA", "BOTAS",
@@ -1323,9 +1446,15 @@ class BotFlowManager:
         
         cleaned_for_name = text
         if ci:
+            ci_raw = re.sub(r'^[VEJPGvejpg]-?', '', ci)
+            cleaned_for_name = re.sub(r'\b(?:CI|C\.I\.|CEDULA|CÉDULA)?\s*' + re.escape(ci_raw) + r'\b', '', cleaned_for_name, flags=re.IGNORECASE)
             cleaned_for_name = re.sub(re.escape(ci), '', cleaned_for_name, flags=re.IGNORECASE)
         if ph:
-            cleaned_for_name = re.sub(re.escape(ph), '', cleaned_for_name, flags=re.IGNORECASE)
+            ph_raw = re.sub(r'\D', '', ph)
+            cleaned_for_name = re.sub(r'\b(?:TLF|TELEFONO|TELÉFONO|CEL|CELULAR|WHATSAPP)?\s*' + re.escape(ph) + r'\b', '', cleaned_for_name, flags=re.IGNORECASE)
+            cleaned_for_name = re.sub(re.escape(ph_raw), '', cleaned_for_name, flags=re.IGNORECASE)
+
+        cleaned_for_name = re.sub(r'^(?:¡?hola!?\s*)?(?:buenas\s*(?:tardes|dias|días|noches)?\s*,?\s*)?(?:soy|me\s+llamo|mi\s+nombre\s+es)\s+', '', cleaned_for_name, flags=re.IGNORECASE)
 
         text_clean_words = re.sub(r'[^\w\s]', '', cleaned_for_name).upper().split()
         if text_clean_words and all(w in (greeting_words | product_blacklist) for w in text_clean_words):
@@ -1342,23 +1471,24 @@ class BotFlowManager:
     # -------------------------------------------------------------
     # MENÚS Y VISTAS
     # -------------------------------------------------------------
-    def _build_catalog_menu(self, session: Dict[str, Any], is_off_hours: bool = False) -> Dict[str, Any]:
+    def _build_catalog_menu(self, session: Dict[str, Any], is_off_hours: bool = False, skip_header: bool = False) -> Dict[str, Any]:
         # FILTRO ESTRICTO: ÚNICAMENTE PRODUCTOS CON STOCK > 0
         products = get_available_catalog_products()
         bcv_rate = bcv_service.get_rate_for_date()
 
         lines = []
         if is_off_hours:
-            lines.append("🌙 *AVISO DE HORARIO:* Fuera de horario laboral presencial (8:00 AM a 5:00 PM). Puede realizar su solicitud y pago en este momento y su retiro quedará programado.")
+            lines.append("🌙 *AVISO:* Nuestra sede física se encuentra cerrada en este momento. Sin embargo, nuestro sistema automatizado puede tomar su pedido y agendar su retiro en horario hábil.")
             lines.append("──────────────────────")
 
-        client_name = session.get("client_name")
-        if client_name and client_name != "CLIENTE":
-            lines.append(f"👋 ¡Hola, *{client_name}*! Bienvenido(a) a *SIS-COMER*.")
-        else:
-            lines.append("👋 ¡Bienvenido! Soy *SIS-COMER*, tu asistente virtual.")
-        lines.append("🏭 *Complejo Industrial Tiuna — Equipo de Comercialización*")
-        lines.append(f"📊 *Tasa Oficial BCV:* Bs. {bcv_rate:,.2f} / $\n")
+        if not skip_header:
+            client_name = session.get("client_name")
+            if client_name and client_name != "CLIENTE":
+                lines.append(f"👋 ¡Hola, *{client_name}*! Bienvenido(a) a *SIS-COMER*.")
+            else:
+                lines.append("👋 ¡Bienvenido! Soy *SIS-COMER*, tu asistente virtual.")
+            lines.append("🏭 *Complejo Industrial Tiuna — Equipo de Comercialización*")
+            lines.append(f"📊 *Tasa Oficial BCV:* Bs. {bcv_rate:,.2f} / $\n")
 
         if not products:
             session["state"] = "CATALOG"
@@ -1377,13 +1507,9 @@ class BotFlowManager:
             waitlist_idx = len(products) + 1
             advisor_idx = len(products) + 2
 
-            lines.append(f"\n[ {waitlist_idx}️⃣ ] 📋 *¿Buscas otro modelo o artículo especial? Avísanos aquí*")
+            lines.append(f"\n[ {waitlist_idx}️⃣ ] 📋 *¿Buscas otro modelo o artículo especial?*")
             lines.append(f"[ {advisor_idx}️⃣ ] 👨‍💼 *Hablar con un Asesor Comercial*")
-            lines.append("\n👉 *¿Qué artículo desea solicitar?*")
-            lines.append(f"• Toca o responde con el *número del producto (1-{len(products)})* o su nombre.")
-            lines.append(f"• Responde *{waitlist_idx}* si buscas otro modelo o pedido especial.")
-            lines.append(f"• Responde *{advisor_idx}* para atención directa con un asesor.")
-            lines.append("• Escribe *0* para reiniciar el menú.")
+            lines.append(f"\n👉 *Elige el número (1-{len(products)}) o escribe el producto que deseas:*")
 
         return {
             "reply": "\n".join(lines),
@@ -1392,7 +1518,6 @@ class BotFlowManager:
         }
 
     def _build_cart_view(self, session: Dict[str, Any]) -> Dict[str, Any]:
-        cart = session["cart"]
         cart = session["cart"]
         lines = ["✅ *Usted ha elegido:*"]
         last_image = None
@@ -1442,55 +1567,62 @@ class BotFlowManager:
 
         total_items = sum(item["qty"] for item in cart)
 
-        pm_bank = config.get("pagomovil_bank") or "Banco de Venezuela"
+        pm_bank = config.get("pagomovil_bank") or "BANCO DE VENEZUELA (0102)"
         pm_phone = config.get("pagomovil_phone") or "0412-1234567"
         pm_id = config.get("pagomovil_id") or "J-408123456"
 
-        tr_bank = config.get("transfer_bank") or "Banco de Venezuela"
+        tr_bank = config.get("transfer_bank") or "BANCO DE VENEZUELA"
         tr_account = config.get("transfer_account") or "0102-0501-80-0000123456"
         tr_holder = config.get("transfer_holder") or "COMPLEJO INDUSTRIAL TIUNA"
 
-        # Datos limpios para copiar y pegar sin etiquetas estorbosas en banca móvil
-        clean_pm_phone = re.sub(r'[^\d]', '', pm_phone)
-        clean_pm_id = pm_id.replace(" ", "")
-        clean_tr_account = re.sub(r'[^\d]', '', tr_account)
-
-        lines = [
-            "💳 *PAGO PREVIO OBLIGATORIO — SIS-COMER* 💳\n",
-            "🛒 *RESUMEN DE SU PEDIDO:*"
-        ]
+        # Mensaje 1: Resumen y montos ($ y Bs)
+        items_lines = []
         for it in cart:
             sz_str = f" (Talla: {it['size']})" if it.get("size") else ""
             item_name = it.get("raw_name") or it.get("name")
-            lines.append(f"• *{it['qty']}x {item_name}*{sz_str} — ${it['subtotal']:.2f} Ref")
+            items_lines.append(f"• *{it['qty']}x {item_name}*{sz_str} — ${it['subtotal']:.2f} Ref")
 
-        lines.append("──────────────────────")
-        lines.append(f"📊 *Total Artículos:* {total_items}")
-        lines.append(f"💵 *Subtotal:* ${subtotal_usd:.2f} REF *(Bs. {subtotal_ves:,.2f})*")
-        if apply_iva:
-            lines.append(f"🧾 *IVA ({iva_rate:g}%):* ${iva_usd:.2f} REF *(Bs. {iva_ves:,.2f})*")
-        lines.append(f"💰 *MONTO TOTAL:* ${total_usd:.2f} REF *(Bs. {total_ves:,.2f})*")
-        lines.append(f"📈 *TASA BCV APLICADA HOY:* Bs. {bcv_rate:.2f}/$\n")
+        iva_line = f"🧾 *IVA ({iva_rate:g}%):* ${iva_usd:.2f} REF *(Bs. {iva_ves:,.2f})*\n" if apply_iva else ""
+        msg1_resumen = (
+            "💳 *PAGO PREVIO OBLIGATORIO*\n\n"
+            "🛒 *RESUMEN DE SU PEDIDO:*\n"
+            + "\n".join(items_lines) + "\n"
+            "──────────────────────\n"
+            f"📊 *Total Artículos:* {total_items}\n"
+            f"💵 *Subtotal:* ${subtotal_usd:.2f} REF *(Bs. {subtotal_ves:,.2f})*\n"
+            f"{iva_line}"
+            f"💰 *MONTO TOTAL:* ${total_usd:.2f} REF *(Bs. {total_ves:,.2f})*\n"
+            f"📈 *Tasa Oficial BCV Hoy:* Bs. {bcv_rate:,.2f}/$"
+        )
 
-        lines.append("📲 *PAGO MÓVIL (Copiar y pegar):*")
-        lines.append(pm_bank.strip())
-        lines.append(pm_phone.strip())
-        lines.append(pm_id.strip())
+        # Mensaje 2: Pago Móvil limpio (con datos separados listos para copiar)
+        msg2_pagomovil = (
+            "📲 *PAGO MÓVIL (Toca los datos para copiar):*\n\n"
+            f"🏦 *Banco:* {pm_bank.strip()}\n"
+            f"📱 *Teléfono:* {pm_phone.strip()}\n"
+            f"🪪 *RIF / C.I:* {pm_id.strip()}"
+        )
 
-        lines.append("\n🏦 *TRANSFERENCIA BANCARIA (Copiar y pegar):*")
-        lines.append(tr_bank.strip())
-        lines.append(tr_account.strip())
-        lines.append(tr_holder.strip())
+        # Mensaje 3: Transferencia Bancaria limpia
+        msg3_transferencia = (
+            "🏛️ *TRANSFERENCIA BANCARIA NACIONAL:*\n\n"
+            f"🏦 *Banco:* {tr_bank.strip()}\n"
+            f"🔢 *Cuenta:* {tr_account.strip()}\n"
+            f"👤 *Titular:* {tr_holder.strip()}\n"
+            f"🪪 *RIF:* {pm_id.strip()}"
+        )
 
-        lines.append("\n⏱️ *AVISO DE SEGURIDAD Y VALIDACIÓN:*")
-        lines.append("La conciliación y validación de pagos en cuenta bancaria toma hasta *24 horas hábiles* por parte del departamento de finanzas. Su solicitud y agendamiento quedan garantizados y reservados inmediatamente con el envío de su comprobante.")
-        lines.append("\n──────────────────────")
-        lines.append("📸 *POR FAVOR ADJUNTE LA FOTO O CAPTURA DE SU COMPROBANTE EN ESTE CHAT*")
-        lines.append("*(Nuestro sistema OCR leerá los datos del comprobante automáticamente)*\n")
-        lines.append("*(O escriba los datos de su pago con Banco, Referencia y Monto)*")
+        # Mensaje 4: Solicitud de comprobante y aviso de conciliación
+        msg4_comprobante = (
+            "📸 *CONSIGNACIÓN DE COMPROBANTE*\n\n"
+            "Una vez realizado su pago, por favor *adjunte la foto o captura de su comprobante* en este chat para registrar su pedido y coordinar su retiro.\n\n"
+            "⏱️ *Tiempo de Conciliación:* La verificación bancaria toma hasta *24 horas hábiles* por administración. Su requerimiento y agendamiento quedan garantizados y reservados inmediatamente al consignar el comprobante."
+        )
 
+        full_reply = f"{msg1_resumen}\n\n{msg2_pagomovil}\n\n{msg3_transferencia}\n\n{msg4_comprobante}"
         return {
-            "reply": "\n".join(lines),
+            "reply": full_reply,
+            "messages": [msg1_resumen, msg2_pagomovil, msg3_transferencia, msg4_comprobante],
             "image_url": None,
             "state": "AWAITING_PAYMENT"
         }

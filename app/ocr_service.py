@@ -5,7 +5,7 @@ import unicodedata
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageEnhance, ImageFilter
 
 from app.time_utils import now_vet_date_str
 
@@ -56,7 +56,8 @@ REF_KEYWORDS = [
     "NUMERO DE OPERACION", "NRO DE OPERACION", "NRO. DE OPERACION", "N° DE OPERACION",
     "N° OPERACION", "NRO OPERACION", "NO. OPERACION", "REFERENCIA", "OPERACION",
     "NRO. REF", "NRO REF", "REF.", "REF", "COMPROBANTE", "APROBACION", "SECUENCIA",
-    "TRANSACCION", "CODIGO", "NUMERO DE CONTROL", "NRO CONTROL", "CONFIRMACION"
+    "TRANSACCION", "CODIGO", "NUMERO DE CONTROL", "NRO CONTROL", "CONFIRMACION",
+    "DOC", "DOCUMENTO", "RECIBO", "CONTROL", "APROBACIÓN", "ID", "ID DE PAGO", "SEQ"
 ]
 
 # Líneas que NO contienen la referencia (cédula, teléfonos, cuentas)
@@ -182,18 +183,27 @@ class ReceiptOCRService:
                                 if 4 <= len(digits) <= 20:
                                     return digits
 
-        # 2) Respaldo: número de 6 a 20 dígitos en líneas limpias (excluyendo teléfonos, cédulas y cuentas)
+        # 2) Buscar patrones directos tipo "Ref: 123456" o "#123456" o "Operación: 123456"
+        for raw_line in clean_lines:
+            m = re.search(r'(?:ref|nro|num|op|sec|doc|recibo|control)[.:#\s]+([0-9]{4,16})', raw_line, re.IGNORECASE)
+            if m:
+                return m.group(1)
+
+        # 3) Respaldo: número de 5 a 20 dígitos en líneas limpias (excluyendo teléfonos y cédulas)
         candidates = []
         for raw_line in clean_lines:
             line_low = raw_line.lower()
             if any(_strip_accents(nk).lower() in line_low for nk in NON_REF_KEYWORDS):
                 continue
-            for m in re.finditer(r'(?<![\d*])(\d{6,20})(?![\d*])', raw_line):
+            for m in re.finditer(r'(?<![\d*])(\d{5,20})(?![\d*])', raw_line):
                 num = m.group(1)
                 if re.match(r'^0?4(12|14|16|22|24|26)\d{7}$', num):   # teléfono
                     continue
                 candidates.append(num)
         if candidates:
+            ideal = [c for c in candidates if 6 <= len(c) <= 12]
+            if ideal:
+                return ideal[0]
             return max(candidates, key=len)
         return None
 
@@ -242,33 +252,66 @@ class ReceiptOCRService:
         return 0.0, "VES"
 
     # ------------------------------------------------------------------
-    # PARSEO DE BANCO (Insensible a mayúsculas/minúsculas)
+    # PARSEO DE BANCO (Insensible a mayúsculas/minúsculas - Prioridad BANCO EMISOR)
     # ------------------------------------------------------------------
     @staticmethod
     def _extract_bank(lines: List[str], full: str) -> str:
         clean_lines = [_strip_accents(l) for l in lines]
         full_clean = _strip_accents(full).lower()
 
-        # Prioridad 1: Línea con "BANCO: ..." o "BANCO EMISOR / ORIGEN"
+        # Palabras indicadoras de ORIGEN / EMISOR (banco desde donde pagó el cliente)
+        ORIGIN_WORDS = ["emisor", "origen", "debito", "debitado", "desde", "cuenta debito", "banco emisor", "banco origen", "debitar"]
+        # Palabras indicadoras de DESTINO / RECEPTOR (banco de la empresa)
+        DEST_WORDS = ["destino", "receptor", "beneficiario", "acreditado", "hacia", "cuenta destino", "banco receptor", "banco destino"]
+
+        # Prioridad 1: Línea que mencione explícitamente banco emisor u origen
         for raw_line in clean_lines:
             line_low = raw_line.lower()
-            if re.match(r'^\s*banco(\s+emisor|\s+origen|\s+receptor|\s+destino)?\s*[:\-]', line_low, re.IGNORECASE) or line_low.startswith("banco "):
+            if any(ow in line_low for ow in ORIGIN_WORDS) and not any(dw in line_low for dw in DEST_WORDS):
                 for name, aliases, code in VENEZUELAN_BANKS:
                     if code in line_low or any(_strip_accents(a).lower() in line_low for a in aliases):
                         return name
 
-        # Prioridad 2: Buscar alias oficiales en todo el texto (insensible a mayúsculas/minúsculas)
+        # Prioridad 2: Buscar en las primeras 4 líneas (logo/encabezado de app bancaria del cliente)
+        header_lines = clean_lines[:4]
+        for raw_line in header_lines:
+            line_low = raw_line.lower()
+            if any(dw in line_low for dw in DEST_WORDS):
+                continue
+            for name, aliases, code in VENEZUELAN_BANKS:
+                if any(_strip_accents(a).lower() in line_low for a in aliases):
+                    return name
+
+        # Prioridad 3: Buscar en todas las líneas excluyendo aquellas marcadas como destino
+        for raw_line in clean_lines:
+            line_low = raw_line.lower()
+            if any(dw in line_low for dw in DEST_WORDS):
+                continue
+            for name, aliases, code in VENEZUELAN_BANKS:
+                if code in line_low or any(_strip_accents(a).lower() in line_low for a in aliases):
+                    return name
+
+        # Prioridad 4: Búsqueda en todo el texto; si hay varios y uno es BDV (común destino), preferir el otro
+        detected_banks = []
         for name, aliases, code in VENEZUELAN_BANKS:
             for a in aliases:
                 a_norm = _strip_accents(a).lower()
                 pattern = r'(?<![a-zA-Z0-9])' + re.escape(a_norm) + r'(?![a-zA-Z0-9])'
                 if re.search(pattern, full_clean, re.IGNORECASE):
-                    return name
+                    if name not in detected_banks:
+                        detected_banks.append(name)
+                    break
 
-        # Prioridad 3: Búsqueda por código bancario (0102, 0134, etc.)
-        for name, aliases, code in VENEZUELAN_BANKS:
-            if re.search(r'\b' + code + r'\b', full_clean):
-                return name
+        if detected_banks:
+            if len(detected_banks) > 1 and "BANCO DE VENEZUELA" in detected_banks:
+                non_bdv = [b for b in detected_banks if b != "BANCO DE VENEZUELA"]
+                if non_bdv:
+                    return non_bdv[0]
+            return detected_banks[0]
+
+        # Prioridad 5: Si menciona pago móvil o transferencia genérica
+        if any(w in full_clean for w in ["pago movil", "pagomovil", "transferencia", "bancario"]):
+            return "BANCO NACIONAL (PAGO MÓVIL)"
 
         return "DESCONOCIDO"
 
@@ -362,9 +405,14 @@ class ReceiptOCRService:
         engine = cls._get_rapidocr()
         img = Image.open(image_path)
         img = ImageOps.exif_transpose(img).convert("RGB")
+        # Preprocesamiento avanzado: optimizar nitidez, contraste y resolución para comprobantes de WhatsApp
+        enhancer = ImageEnhance.Contrast(img)
+        img = enhancer.enhance(1.35)
+        sharpener = ImageEnhance.Sharpness(img)
+        img = sharpener.enhance(1.3)
         # Ampliar imágenes pequeñas para mejorar lectura
-        if max(img.size) < 1000:
-            factor = 1000 / max(img.size)
+        if max(img.size) < 1200:
+            factor = 1200 / max(img.size)
             img = img.resize((int(img.width * factor), int(img.height * factor)), Image.Resampling.LANCZOS)
         import numpy as np
         result = engine(np.array(img))

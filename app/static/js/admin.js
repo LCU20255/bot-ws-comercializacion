@@ -276,7 +276,12 @@ function renderOrders(data) {
           <span class="status-badge ${badgeClass}">${status}</span>
         </td>
         <td onclick="event.stopPropagation()">
-          <div style="display: flex; gap: 6px; align-items: center;">
+          <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+            ${(status !== 'CONFIRMADA' && status !== 'RETIRADA' && status !== 'CANCELADA') ? `
+              <button class="btn btn-sm" style="background: #166534; color: #fff; font-weight: 700; padding: 3px 8px; font-size: 0.72rem; border-radius: 4px;" onclick="confirmOrderPayment(${item.id})" title="Confirmar Pago y Notificar automáticamente por WhatsApp">
+                <i class="bi bi-check-circle-fill"></i> Confirmar
+              </button>
+            ` : ''}
             <select style="padding: 4px 6px; font-size: 0.72rem;" onchange="changeOrderStatus(${item.id}, this.value)">
               <option value="PENDIENTE POR CONFIRMAR PAGO" ${status === 'PENDIENTE POR CONFIRMAR PAGO' ? 'selected' : ''}>PENDIENTE POR CONFIRMAR PAGO</option>
               <option value="PENDIENTE POR ATENCIÓN" ${status === 'PENDIENTE POR ATENCIÓN' ? 'selected' : ''}>PENDIENTE POR ATENCIÓN</option>
@@ -287,7 +292,7 @@ function renderOrders(data) {
               <option value="CANCELADA" ${status === 'CANCELADA' ? 'selected' : ''}>CANCELADA</option>
             </select>
             <button class="btn btn-icon btn-sm" onclick="openOrderDetail(${item.id})" title="Ver Detalles"><i class="bi bi-eye"></i></button>
-            <a href="/invoice/${item.id}" target="_blank" class="btn btn-icon btn-sm" style="color: #c5a059;" title="Ver Factura / Recibo Oficial CIT"><i class="bi bi-receipt"></i></a>
+            <a href="/invoice/${item.id}" target="_blank" class="btn btn-icon btn-sm" style="color: #c5a059;" title="Ver Comprobante Oficial de Orden de Compra"><i class="bi bi-receipt"></i></a>
             <button class="btn btn-icon btn-sm text-danger" onclick="deleteOrder(${item.id})" title="Eliminar"><i class="bi bi-trash3"></i></button>
           </div>
         </td>
@@ -429,34 +434,57 @@ function openOrderDetail(orderId) {
       </div>
     </div>
 
-    <!-- Panel de Auditoría Comprobante OCR & Datos Manuales -->
+    <!-- Panel de Auditoría Comprobante & Datos Bancarios -->
     <div class="ocr-receipt-box">
-      <h4><i class="bi bi-receipt-cutoff"></i> Verificación y Comprobante Bancario</h4>
-      <div class="ocr-field-row">
-        <span>Banco Emisor:</span>
-        <strong>${order.receipt_bank || 'NO REGISTRADO'}</strong>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+        <h4 style="margin: 0;"><i class="bi bi-receipt-cutoff"></i> Verificación y Comprobante Bancario</h4>
+        <button class="btn btn-sm btn-outline-secondary" onclick="toggleEditReceiptFields(${order.id})" style="font-size: 0.72rem; padding: 2px 7px;">
+          <i class="bi bi-pencil"></i> Corregir Datos
+        </button>
       </div>
-      <div class="ocr-field-row">
-        <span>Nro. de Referencia:</span>
-        <code style="font-weight: 700; color: #0284c7;">${order.receipt_ref || 'S/REF'}</code>
+
+      <div id="receipt-display-${order.id}">
+        <div class="ocr-field-row">
+          <span>Banco Emisor:</span>
+          <strong>${order.receipt_bank || 'NO REGISTRADO'}</strong>
+        </div>
+        <div class="ocr-field-row">
+          <span>Nro. de Referencia:</span>
+          <code style="font-weight: 700; color: #0284c7;">${order.receipt_ref || 'S/REF'}</code>
+        </div>
+        <div class="ocr-field-row">
+          <span>Fecha de Pago Declarada:</span>
+          <strong>${formatDateDMY(order.receipt_date)}</strong>
+        </div>
+        <div class="ocr-field-row">
+          <span>Tasa BCV Aplicada en Pago:</span>
+          <strong>Bs. ${order.bcv_rate_applied ? order.bcv_rate_applied.toFixed(4) : '-'} / $</strong>
+        </div>
       </div>
-      <div class="ocr-field-row">
-        <span>Fecha de Pago Declarada:</span>
-        <strong>${formatDateDMY(order.receipt_date)}</strong>
+
+      <!-- Formulario para editar datos bancarios si el cliente se equivocó -->
+      <div id="receipt-edit-${order.id}" style="display: none; margin-top: 10px; padding: 10px; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px;">
+        <h5 style="font-size: 0.8rem; margin-bottom: 8px; color: #0f172a;"><i class="bi bi-pencil-square"></i> Edición Administrativa de Comprobante:</h5>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
+          <div>
+            <label style="font-size: 0.72rem; font-weight: 600; display: block;">Banco Emisor:</label>
+            <input type="text" id="edit-receipt-bank-${order.id}" class="form-control" style="font-size: 0.75rem; padding: 4px;" value="${order.receipt_bank || ''}" placeholder="Ej: BANCO MERCANTIL">
+          </div>
+          <div>
+            <label style="font-size: 0.72rem; font-weight: 600; display: block;">Nro. Referencia:</label>
+            <input type="text" id="edit-receipt-ref-${order.id}" class="form-control" style="font-size: 0.75rem; padding: 4px;" value="${order.receipt_ref || ''}" placeholder="Ej: 12345678">
+          </div>
+        </div>
+        <div style="display: flex; gap: 6px; justify-content: flex-end;">
+          <button class="btn btn-sm btn-secondary" onclick="toggleEditReceiptFields(${order.id})" style="font-size: 0.72rem; padding: 3px 8px;">Cancelar</button>
+          <button class="btn btn-sm btn-primary" onclick="saveReceiptDetails(${order.id})" style="font-size: 0.72rem; padding: 3px 8px;"><i class="bi bi-check-lg"></i> Guardar Cambios</button>
+        </div>
       </div>
-      <div class="ocr-field-row">
-        <span>Tasa BCV Aplicada en Pago:</span>
-        <strong>Bs. ${order.bcv_rate_applied ? order.bcv_rate_applied.toFixed(4) : '-'} / $</strong>
-      </div>
+
       ${order.manual_payment_data ? `
         <div style="margin-top: 8px; padding: 8px 10px; background: #fefce8; border: 1px solid #fef08a; border-radius: 6px; font-size: 0.8rem; color: #854d0e;">
-          <strong><i class="bi bi-pencil-square"></i> Datos reportados por el cliente (WhatsApp):</strong><br>
+          <strong><i class="bi bi-chat-left-dots"></i> Reportado por el cliente en WhatsApp:</strong><br>
           ${order.manual_payment_data}
-        </div>
-      ` : ''}
-      ${order.ocr_raw_text ? `
-        <div style="margin-top: 8px; font-size: 0.78rem; background: #ffffff; padding: 6px 10px; border-radius: 4px; border: 1px solid #e2e8f0; color: #64748b; font-family: monospace; white-space: pre-wrap; max-height: 80px; overflow-y: auto;">
-          <strong>Texto extraído por OCR:</strong><br>${order.ocr_raw_text}
         </div>
       ` : ''}
     </div>
@@ -469,14 +497,19 @@ function openOrderDetail(orderId) {
       </div>
     </div>
 
-    <!-- Cita de Retiro -->
-    <div style="margin-top: 14px; font-size: 0.9rem; color: #334155; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #e2e8f0; padding-top: 12px;">
+    <!-- Cita de Retiro & Acciones -->
+    <div style="margin-top: 14px; font-size: 0.9rem; color: #334155; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #e2e8f0; padding-top: 12px; flex-wrap: wrap; gap: 8px;">
       <div>
         <i class="bi bi-calendar-event"></i> <strong>Retiro Programado:</strong> ${formatDateDMY(order.pickup_date)} a las ${order.pickup_time}
       </div>
-      <div style="display: flex; gap: 8px;">
-        <a href="/invoice/${order.id}" target="_blank" class="btn btn-sm btn-dark" style="background: #0f233a; border-color: #c5a059; color: #e6ca85;"><i class="bi bi-receipt"></i> Ver Factura / Recibo</a>
-        <button class="btn btn-sm btn-primary" onclick="openEditOrderModalDirect(${order.id})"><i class="bi bi-pencil"></i> Editar</button>
+      <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+        ${(order.status !== 'CONFIRMADA' && order.status !== 'RETIRADA' && order.status !== 'CANCELADA') ? `
+          <button class="btn btn-sm" style="background: #166534; border: none; color: #fff; font-weight: 700;" onclick="confirmOrderPayment(${order.id})">
+            <i class="bi bi-check-circle-fill"></i> Confirmar Pago (WhatsApp)
+          </button>
+        ` : ''}
+        <a href="/invoice/${order.id}" target="_blank" class="btn btn-sm btn-dark" style="background: #0f233a; border-color: #c5a059; color: #e6ca85;"><i class="bi bi-receipt"></i> Ver Comprobante</a>
+        <button class="btn btn-sm btn-primary" onclick="openEditOrderModalDirect(${order.id})"><i class="bi bi-pencil"></i> Editar Pedido</button>
         <button class="btn btn-sm btn-secondary" onclick="closeOrderModal()">Cerrar</button>
       </div>
     </div>
@@ -521,6 +554,79 @@ function closeOrderModal() {
   const modal = document.getElementById("order-detail-modal");
   if (modal) modal.classList.remove("show");
   currentSelectedOrder = null;
+}
+
+// ----------------- CONFIRMACIÓN DE PAGO & EDICIÓN DE COMPROBANTE -----------------
+async function confirmOrderPayment(orderId) {
+  if (!confirm("¿Desea confirmar el pago de este pedido y notificar automáticamente al cliente por WhatsApp?")) {
+    return;
+  }
+  try {
+    const res = await fetch(`/api/orders/${orderId}/confirm-payment`, {
+      method: "POST"
+    });
+    const data = await res.json();
+    if (res.ok) {
+      notifySuccess("¡Pago Confirmado!", data.message || "El pedido ha sido confirmado y se envió la notificación de WhatsApp al cliente.");
+      loadOrders();
+      if (currentSelectedOrder && currentSelectedOrder.id === orderId) {
+        closeOrderModal();
+      }
+    } else {
+      notifyError("Error", data.detail || "No se pudo confirmar el pago.");
+    }
+  } catch (err) {
+    notifyError("Error de Conexión", "No se pudo comunicar con el servidor para confirmar el pago.");
+  }
+}
+
+function toggleEditReceiptFields(orderId) {
+  const editBox = document.getElementById(`receipt-edit-${orderId}`);
+  if (editBox) {
+    editBox.style.display = editBox.style.display === "none" ? "block" : "none";
+  }
+}
+
+async function saveReceiptDetails(orderId) {
+  const bankInput = document.getElementById(`edit-receipt-bank-${orderId}`);
+  const refInput = document.getElementById(`edit-receipt-ref-${orderId}`);
+  if (!bankInput || !refInput) return;
+
+  const order = orders.find(o => o.id === orderId);
+  if (!order) return;
+
+  const updatedPayload = {
+    client_name: order.client_name,
+    cedula: order.cedula,
+    phone: order.phone,
+    items_summary: order.items_summary,
+    total_items: order.total_items,
+    total_amount: order.total_amount,
+    payment_method: order.payment_method,
+    pickup_date: order.pickup_date,
+    pickup_time: order.pickup_time,
+    status: order.status,
+    notes: order.notes,
+    receipt_bank: bankInput.value.trim().toUpperCase(),
+    receipt_ref: refInput.value.trim().toUpperCase()
+  };
+
+  try {
+    const res = await fetch(`/api/orders/${orderId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updatedPayload)
+    });
+    if (res.ok) {
+      notifySuccess("Guardado", "Datos del comprobante actualizados correctamente.");
+      await loadOrders();
+      openOrderDetail(orderId);
+    } else {
+      notifyError("Error", "No se pudieron guardar los cambios del comprobante.");
+    }
+  } catch (err) {
+    notifyError("Error", "Error al guardar comprobante.");
+  }
 }
 
 // ----------------- INVENTARIO & KARDEX -----------------

@@ -11,7 +11,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 import xlsxwriter
-import jinja2
+try:
+    import jinja2
+except ImportError:
+    jinja2 = None
+
 
 from app.config import (
     BASE_DIR, DATA_DIR, PORT, HOST,
@@ -177,7 +181,12 @@ class OrderUpdateSchema(BaseModel):
     items_summary: str
     total_items: int = 1
     total_amount: float = 0.0
+    amount_usd: Optional[float] = None
+    amount_ves: Optional[float] = None
     payment_method: str = "EFECTIVO / DIVISAS"
+    receipt_ref: Optional[str] = None
+    receipt_bank: Optional[str] = None
+    receipt_date: Optional[str] = None
     pickup_date: str
     pickup_time: str
     status: str = "PENDIENTE"
@@ -239,24 +248,60 @@ def admin_page():
         html_content = f.read()
     return HTMLResponse(content=html_content)
 
-# ----------------- FACTURACIÓN / RECIBO CIT -----------------
-jinja_env = jinja2.Environment(loader=jinja2.FileSystemLoader(str(BASE_DIR / "app" / "templates")), autoescape=True)
+# ----------------- FACTURACIÓN / COMPROBANTE OFICIAL DE ORDEN DE COMPRA CIT -----------------
+import base64
+
+def _generate_qr_base64(data: str) -> str:
+    try:
+        qr = qrcode.QRCode(version=1, box_size=4, border=1)
+        qr.add_data(data)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="#0f233a", back_color="white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("utf-8")
+    except Exception as e:
+        logger.warning(f"No se pudo generar QR para comprobante: {e}")
+        return ""
+
+def _render_standalone_invoice(order: Dict[str, Any]) -> str:
+    template_path = BASE_DIR / "app" / "templates" / "invoice_template.html"
+    if template_path.exists():
+        with open(template_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        import re
+        for key, val in order.items():
+            if isinstance(val, (str, int, float)):
+                content = re.sub(r'\{\{\s*order\.' + re.escape(key) + r'[^}]*\}\}', str(val), content)
+        content = re.sub(r'\{%[^%]*%\}', '', content)
+        content = re.sub(r'\{\{[^}]*\}\}', '', content)
+        return content
+    return "<h1>Comprobante Oficial Complejo Industrial Tiuna C.A.</h1>"
+
+def render_invoice_html(order_data: Dict[str, Any]) -> str:
+    template_path = BASE_DIR / "app" / "templates" / "invoice_template.html"
+    if jinja2 is not None and template_path.exists():
+        try:
+            jinja_env = jinja2.Environment(loader=jinja2.FileSystemLoader(str(BASE_DIR / "app" / "templates")), autoescape=True)
+            return jinja_env.get_template("invoice_template.html").render(order=order_data)
+        except Exception as e:
+            logger.error(f"Error renderizando comprobante con jinja2: {e}")
+    return _render_standalone_invoice(order_data)
 
 @app.get("/invoice/preview", response_class=HTMLResponse)
-def invoice_preview():
-    template = jinja_env.get_template("invoice_template.html")
+def invoice_preview(request: Request):
     config = get_all_config()
     bcv_rate = bcv_service.get_rate_for_date()
     
     mock_order = {
         "company_rif": "G-20011500-2",
-        "company_address": config.get("pickup_address", "Sede de Intendencia Militar — Fuerte Tiuna, El Valle, Caracas, D.C."),
+        "company_address": config.get("pickup_address", "Sede de Intendencia — Fuerte Tiuna, El Valle, Caracas, D.C."),
         "company_phone": config.get("advisor_phone") or config.get("pagomovil_phone") or "0412-1234567",
         "ticket_code": "CIT-261006-001",
         "created_at": now_vet_str(),
         "pickup_date": now_vet_date_str(),
         "pickup_time": "09:30 AM",
-        "status": "PENDIENTE POR CONFIRMAR PAGO",
+        "status": "CONFIRMADA",
         "client_name": "CARLOS EDUARDO PÉREZ",
         "cedula": "V-18.456.123",
         "phone": "0414-1234567",
@@ -285,13 +330,13 @@ def invoice_preview():
         "subtotal_usd": 43.00,
         "iva_amount": 0.00,
         "amount_usd": 43.00,
-        "amount_ves": round(43.00 * bcv_rate, 2)
+        "amount_ves": round(43.00 * bcv_rate, 2),
+        "qr_code_base64": _generate_qr_base64("CIT-261006-001-VALIDACION-DESPACHO")
     }
-    html = template.render(order=mock_order)
-    return HTMLResponse(content=html)
+    return HTMLResponse(content=render_invoice_html(mock_order))
 
 @app.get("/invoice/{order_id}", response_class=HTMLResponse)
-def invoice_detail(order_id: int):
+def invoice_detail(order_id: int, request: Request):
     order = get_order_by_id(order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
@@ -312,21 +357,23 @@ def invoice_detail(order_id: int):
             
     order_data = dict(order)
     order_data["company_rif"] = "G-20011500-2"
-    order_data["company_address"] = config.get("pickup_address", "Sede de Intendencia Militar — Fuerte Tiuna, El Valle, Caracas, D.C.")
+    order_data["company_address"] = config.get("pickup_address", "Sede de Intendencia — Fuerte Tiuna, El Valle, Caracas, D.C.")
     order_data["company_phone"] = config.get("advisor_phone") or config.get("pagomovil_phone") or "0412-1234567"
     order_data["items_list"] = items_list
     order_data["bcv_rate_applied"] = bcv_rate
     
-    template = jinja_env.get_template("invoice_template.html")
-    html = template.render(order=order_data)
-    return HTMLResponse(content=html)
+    base_url = str(request.base_url).rstrip("/")
+    verification_url = f"{base_url}/invoice/{order_id}"
+    order_data["qr_code_base64"] = _generate_qr_base64(verification_url)
+    
+    return HTMLResponse(content=render_invoice_html(order_data))
 
 @app.get("/invoice/ticket/{ticket_code}", response_class=HTMLResponse)
-def invoice_by_ticket(ticket_code: str):
+def invoice_by_ticket(ticket_code: str, request: Request):
     order = get_order_by_ticket(ticket_code)
     if not order:
         raise HTTPException(status_code=404, detail=f"Orden con ticket {ticket_code} no encontrada")
-    return invoice_detail(order["id"])
+    return invoice_detail(order["id"], request)
 
 # ----------------- REST API: PRODUCTS -----------------
 @app.get("/api/products")
@@ -419,10 +466,67 @@ def api_update_order(order_id: int, body: OrderUpdateSchema):
     update_order(order_id, body.dict())
     return {"status": "ok", "message": "Pedido actualizado con éxito"}
 
+async def _notify_payment_confirmation(order: Dict[str, Any], base_url: str) -> bool:
+    phone = order.get("phone", "")
+    client_name = order.get("client_name") if order.get("client_name") != "CONTACTO POR ATENDER" else "Estimado(a) Cliente"
+    ticket = order.get("ticket_code", "")
+    items = order.get("items_summary", "")
+    usd = float(order.get("amount_usd") or order.get("total_amount") or 0.0)
+    ves = float(order.get("amount_ves") or 0.0)
+    ref = order.get("receipt_ref") or "Registrada"
+    bank = order.get("receipt_bank") or "Verificado"
+    date_pickup = format_date_dmy(order.get("pickup_date"))
+    time_pickup = order.get("pickup_time") or "09:00 AM"
+
+    invoice_link = f"{base_url}/invoice/{order['id']}"
+
+    message = (
+        f"✅ *¡PAGO CONFIRMADO CON ÉXITO!* 🎉\n\n"
+        f"Estimado(a) *{client_name}*, le informamos que su pago para el pedido `{ticket}` ha sido verificado y aprobado satisfactoriamente por nuestro departamento de administración.\n\n"
+        f"📦 *Artículos:* {items}\n"
+        f"💵 *Monto Aprobado:* ${usd:.2f} REF *(Bs. {ves:,.2f})*\n"
+        f"🏦 *Referencia:* `{ref}` | Banco: *{bank}*\n"
+        f"📅 *Cita de Retiro Programada:* {date_pickup} a las {time_pickup}\n"
+        f"📍 *Lugar:* Complejo Industrial Tiuna — Sede de Comercialización\n\n"
+        f"📄 *Comprobante Oficial de Orden de Compra:*\n"
+        f"Puede consultar o imprimir su documento con validación digital aquí:\n"
+        f"{invoice_link}\n\n"
+        f"¡Gracias por su compra! Le esperamos en la fecha pautada."
+    )
+
+    import re
+    clean_digits = re.sub(r'\D', '', phone)
+    wa_target = f"58{clean_digits[1:]}" if clean_digits.startswith("0") else (clean_digits if clean_digits.startswith("58") else f"58{clean_digits}")
+    try:
+        return await wa_service.send_message(to_phone=wa_target, text=message)
+    except Exception as e:
+        logger.warning(f"Error enviando confirmación WhatsApp a {wa_target}: {e}")
+        return False
+
 @app.put("/api/orders/{order_id}/status")
-def api_update_order_status(order_id: int, body: StatusUpdateSchema):
+async def api_update_order_status(order_id: int, body: StatusUpdateSchema, request: Request):
     update_order_status(order_id, body.status, changed_by=body.changed_by or "ADMIN", notes=body.notes or "")
+    if body.status.upper() == "CONFIRMADA":
+        order = get_order_by_id(order_id)
+        if order:
+            base_url = str(request.base_url).rstrip("/")
+            await _notify_payment_confirmation(order, base_url)
     return {"status": "ok", "message": f"Estado actualizado a {body.status.upper()}"}
+
+@app.post("/api/orders/{order_id}/confirm-payment")
+async def api_confirm_payment(order_id: int, request: Request):
+    order = get_order_by_id(order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Pedido no encontrado")
+
+    update_order_status(order_id, "CONFIRMADA", changed_by="ADMIN", notes="Pago confirmado y verificado desde el panel administrativo")
+    base_url = str(request.base_url).rstrip("/")
+    sent_ok = await _notify_payment_confirmation(order, base_url)
+    return {
+        "status": "ok",
+        "message": f"Pago confirmado exitosamente y notificación enviada a {order['client_name']}",
+        "whatsapp_sent": sent_ok
+    }
 
 @app.get("/api/orders/{order_id}/history")
 def api_get_order_history(order_id: int):

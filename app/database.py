@@ -58,7 +58,7 @@ def init_db(conn=None):
         description TEXT,
         price REAL NOT NULL DEFAULT 0.0,
         price_display TEXT,
-        category TEXT DEFAULT 'MILITAR',
+        category TEXT DEFAULT 'TEXTIL',
         image_url TEXT,
         stock INTEGER DEFAULT 0,
         is_active INTEGER DEFAULT 1,
@@ -259,7 +259,7 @@ def create_product(data: Dict[str, Any], updated_by: str = "ADMIN") -> int:
     slug = name.lower().replace(" ", "-")
     price = float(data.get("price", 0.0))
     price_display = data.get("price_display") or f"${price:.2f} Ref"
-    category = str(data.get("category", "MILITAR")).strip().upper()
+    category = str(data.get("category", "TEXTIL")).strip().upper()
     requires_size = int(data.get("requires_size", 0))
     current_time_vet = now_vet_str()
 
@@ -681,13 +681,20 @@ def update_order(order_id: int, data: Dict[str, Any]) -> bool:
 
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("""
-        UPDATE orders
-        SET client_name = ?, cedula = ?, phone = ?, items_summary = ?,
-            total_items = ?, total_amount = ?, payment_method = ?,
-            pickup_date = ?, pickup_time = ?, notes = ?
-        WHERE id = ?
-    """, (
+
+    extra_sets = []
+    extra_vals = []
+    for field in ["receipt_ref", "receipt_bank", "receipt_date", "amount_usd", "amount_ves"]:
+        if field in data and data[field] is not None:
+            extra_sets.append(f"{field} = ?")
+            extra_vals.append(data[field])
+
+    set_clause = "client_name = ?, cedula = ?, phone = ?, items_summary = ?, total_items = ?, total_amount = ?, payment_method = ?, pickup_date = ?, pickup_time = ?, notes = ?"
+    if extra_sets:
+        set_clause += ", " + ", ".join(extra_sets)
+
+    query = f"UPDATE orders SET {set_clause} WHERE id = ?"
+    vals = [
         str(data.get("client_name", "")).strip().upper(),
         str(data.get("cedula", "")).strip().upper(),
         str(data.get("phone", "")).strip(),
@@ -697,9 +704,10 @@ def update_order(order_id: int, data: Dict[str, Any]) -> bool:
         str(data.get("payment_method", "EFECTIVO / DIVISAS")).strip().upper(),
         str(data.get("pickup_date", "")),
         str(data.get("pickup_time", "")),
-        data.get("notes", ""),
-        order_id
-    ))
+        data.get("notes", "")
+    ] + extra_vals + [order_id]
+
+    cursor.execute(query, tuple(vals))
     conn.commit()
     conn.close()
     return True
@@ -985,7 +993,7 @@ def is_maintenance_active() -> bool:
     return config.get("maintenance_mode", "0") == "1"
 
 def is_within_business_hours() -> bool:
-    """Verifica si la hora actual está dentro del horario laboral (ej: 08:00 a 17:00) en hora de Venezuela"""
+    """Verifica si la hora actual está dentro del horario laboral en hora de Venezuela, soportando cruces de medianoche."""
     config = get_all_config()
     start_str = config.get("business_hours_start", "08:00")
     end_str = config.get("business_hours_end", "17:00")
@@ -997,7 +1005,11 @@ def is_within_business_hours() -> bool:
         end_time = time(eh, em)
 
         now_time = now_vet().time()
-        return start_time <= now_time <= end_time
+        if start_time <= end_time:
+            return start_time <= now_time <= end_time
+        else:
+            # Horario que cruza medianoche (ej: 20:00 a 05:00)
+            return now_time >= start_time or now_time <= end_time
     except Exception:
         return True
 
