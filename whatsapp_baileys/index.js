@@ -308,8 +308,30 @@ const outboundServer = http.createServer((req, res) => {
         if (!cleanPhone.endsWith("@s.whatsapp.net")) cleanPhone = `${cleanPhone}@s.whatsapp.net`;
 
         if (globalSock && globalSock.user) {
-          await globalSock.sendMessage(cleanPhone, { text });
-          console.log(`📤 [Outbound Enviado vía Baileys] Para: ${cleanPhone}`);
+          if (parsed.document_path && fs.existsSync(parsed.document_path)) {
+            const buffer = fs.readFileSync(parsed.document_path);
+            const fileName = parsed.file_name || path.basename(parsed.document_path);
+            await globalSock.sendMessage(cleanPhone, {
+              document: buffer,
+              mimetype: "application/pdf",
+              fileName: fileName,
+              caption: text || undefined
+            });
+            console.log(`📄 [Documento PDF Enviado vía Baileys] Para: ${cleanPhone} (${fileName})`);
+          } else if (parsed.document_base64) {
+            const buffer = Buffer.from(parsed.document_base64, "base64");
+            const fileName = parsed.file_name || "Comprobante_Orden_Compra.pdf";
+            await globalSock.sendMessage(cleanPhone, {
+              document: buffer,
+              mimetype: "application/pdf",
+              fileName: fileName,
+              caption: text || undefined
+            });
+            console.log(`📄 [Documento PDF Enviado vía Baileys] Para: ${cleanPhone} (${fileName})`);
+          } else {
+            await globalSock.sendMessage(cleanPhone, { text });
+            console.log(`📤 [Outbound Enviado vía Baileys] Para: ${cleanPhone}`);
+          }
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ status: "sent", to: cleanPhone }));
         } else {

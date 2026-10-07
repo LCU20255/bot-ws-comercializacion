@@ -33,7 +33,7 @@ from app.database import (
     delete_waitlist_item, convert_waitlist_to_order, reset_database_to_virgin,
     get_daily_sales_report, get_order_status_history, reset_operational_data
 )
-from app.time_utils import now_vet, now_vet_str, now_vet_date_str
+from app.time_utils import now_vet, now_vet_str, now_vet_date_str, format_date_dmy, format_datetime_dmy
 from app.bot_flow import bot_manager, reset_session
 from app.bcv_service import bcv_service
 from app.whatsapp_service import notify_waitlist_stock_available, wa_service
@@ -244,6 +244,17 @@ def admin_page():
     template_path = BASE_DIR / "app" / "templates" / "admin.html"
     if not template_path.exists():
         return HTMLResponse("<h1>Panel no encontrado</h1>", status_code=404)
+    with open(template_path, "r", encoding="utf-8") as f:
+        html_content = f.read()
+    return HTMLResponse(content=html_content)
+
+@app.get("/flowchart", response_class=HTMLResponse)
+def flowchart_page():
+    template_path = BASE_DIR / "app" / "templates" / "flowchart.html"
+    if not template_path.exists():
+        template_path = BASE_DIR / "flowchart.html"
+    if not template_path.exists():
+        return HTMLResponse("<h1>Flujograma no encontrado</h1>", status_code=404)
     with open(template_path, "r", encoding="utf-8") as f:
         html_content = f.read()
     return HTMLResponse(content=html_content)
@@ -466,6 +477,44 @@ def api_update_order(order_id: int, body: OrderUpdateSchema):
     update_order(order_id, body.dict())
     return {"status": "ok", "message": "Pedido actualizado con éxito"}
 
+def generate_order_invoice_pdf(order: Dict[str, Any], base_url: str) -> Optional[bytes]:
+    """
+    Genera el archivo PDF oficial del Comprobante de Orden de Compra
+    utilizando WeasyPrint y el template corporativo con código QR digital.
+    """
+    try:
+        from weasyprint import HTML
+        config = get_all_config()
+        bcv_rate = order.get("bcv_rate_applied") or bcv_service.get_rate_for_date()
+        
+        raw_items = order.get("items_detail")
+        items_list = []
+        if raw_items:
+            try:
+                if isinstance(raw_items, str):
+                    items_list = json.loads(raw_items)
+                elif isinstance(raw_items, list):
+                    items_list = raw_items
+            except Exception:
+                items_list = []
+                
+        order_data = dict(order)
+        order_data["company_rif"] = "G-20011500-2"
+        order_data["company_address"] = config.get("pickup_address", "Sede de Intendencia — Fuerte Tiuna, El Valle, Caracas, D.C.")
+        order_data["company_phone"] = config.get("advisor_phone") or config.get("pagomovil_phone") or "0412-1234567"
+        order_data["items_list"] = items_list
+        order_data["bcv_rate_applied"] = bcv_rate
+        
+        verification_url = f"{base_url}/invoice/{order['id']}"
+        order_data["qr_code_base64"] = _generate_qr_base64(verification_url)
+        
+        html_content = render_invoice_html(order_data)
+        pdf_bytes = HTML(string=html_content).write_pdf()
+        return pdf_bytes
+    except Exception as e:
+        logger.error(f"Error generando PDF de orden {order.get('id')}: {e}")
+        return None
+
 async def _notify_payment_confirmation(order: Dict[str, Any], base_url: str) -> bool:
     phone = order.get("phone", "")
     client_name = order.get("client_name") if order.get("client_name") != "CONTACTO POR ATENDER" else "Estimado(a) Cliente"
@@ -475,7 +524,7 @@ async def _notify_payment_confirmation(order: Dict[str, Any], base_url: str) -> 
     ves = float(order.get("amount_ves") or 0.0)
     ref = order.get("receipt_ref") or "Registrada"
     bank = order.get("receipt_bank") or "Verificado"
-    date_pickup = format_date_dmy(order.get("pickup_date"))
+    date_pickup = format_date_dmy(order.get("pickup_date")) or "POR COORDINAR"
     time_pickup = order.get("pickup_time") or "09:00 AM"
 
     invoice_link = f"{base_url}/invoice/{order['id']}"
@@ -488,24 +537,80 @@ async def _notify_payment_confirmation(order: Dict[str, Any], base_url: str) -> 
         f"🏦 *Referencia:* `{ref}` | Banco: *{bank}*\n"
         f"📅 *Cita de Retiro Programada:* {date_pickup} a las {time_pickup}\n"
         f"📍 *Lugar:* Complejo Industrial Tiuna — Sede de Comercialización\n\n"
-        f"📄 *Comprobante Oficial de Orden de Compra:*\n"
-        f"Puede consultar o imprimir su documento con validación digital aquí:\n"
+        f"📄 *Adjunto encontrará su Comprobante Oficial de Orden de Compra en formato PDF con Código QR de validación digital.*\n"
+        f"También puede consultarlo en línea aquí:\n"
         f"{invoice_link}\n\n"
         f"¡Gracias por su compra! Le esperamos en la fecha pautada."
     )
 
     import re
-    clean_digits = re.sub(r'\D', '', phone)
-    wa_target = f"58{clean_digits[1:]}" if clean_digits.startswith("0") else (clean_digits if clean_digits.startswith("58") else f"58{clean_digits}")
+    import tempfile
+    clean_digits = re.sub(r'\D', '', str(phone))
+    if clean_digits.startswith("0") and len(clean_digits) == 11:
+        wa_target = f"58{clean_digits[1:]}"
+    elif clean_digits.startswith("58"):
+        wa_target = clean_digits
+    elif len(clean_digits) == 10:
+        wa_target = f"58{clean_digits}"
+    else:
+        wa_target = clean_digits
+
+    # 1. Generar temporalmente el PDF oficial de la factura / orden de compra
+    pdf_bytes = generate_order_invoice_pdf(order, base_url)
+    pdf_path = None
+    file_name = f"Orden_Compra_{ticket}.pdf"
+
     try:
-        return await wa_service.send_message(to_phone=wa_target, text=message)
+        if pdf_bytes:
+            temp_dir = Path(tempfile.gettempdir())
+            temp_pdf = temp_dir / file_name
+            with open(temp_pdf, "wb") as f:
+                f.write(pdf_bytes)
+            pdf_path = str(temp_pdf)
+
+        # 2. Despachar a WhatsApp (con PDF adjunto si se generó, o fallback a mensaje de texto)
+        if pdf_path and os.path.exists(pdf_path):
+            sent = await wa_service.send_document(
+                to_phone=wa_target,
+                document_path=pdf_path,
+                document_bytes=pdf_bytes,
+                file_name=file_name,
+                caption=message
+            )
+        else:
+            sent = await wa_service.send_message(to_phone=wa_target, text=message)
+        return sent
     except Exception as e:
-        logger.warning(f"Error enviando confirmación WhatsApp a {wa_target}: {e}")
+        logger.warning(f"Error enviando confirmación WhatsApp con PDF a {wa_target}: {e}")
         return False
+    finally:
+        # Destruir físicamente el archivo temporal de disco como solicitó el usuario
+        if pdf_path and os.path.exists(pdf_path):
+            try:
+                os.remove(pdf_path)
+            except Exception:
+                pass
+
+@app.get("/invoice/{order_id}/pdf")
+def invoice_download_pdf(order_id: int, request: Request):
+    """Descarga directa del comprobante de orden de compra en formato PDF"""
+    order = get_order_by_id(order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    base_url = str(request.base_url).rstrip("/")
+    pdf_bytes = generate_order_invoice_pdf(order, base_url)
+    if not pdf_bytes:
+        raise HTTPException(status_code=500, detail="Error generando PDF")
+    ticket = order.get("ticket_code", f"CIT-{order_id}")
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=Orden_Compra_{ticket}.pdf"}
+    )
 
 @app.put("/api/orders/{order_id}/status")
 async def api_update_order_status(order_id: int, body: StatusUpdateSchema, request: Request):
-    update_order_status(order_id, body.status, changed_by=body.changed_by or "ADMIN", notes=body.notes or "")
+    update_order_status(order_id, body.status, changed_by=body.changed_by or "ADMIN", notes=body.notes or "", notify_client=False)
     if body.status.upper() == "CONFIRMADA":
         order = get_order_by_id(order_id)
         if order:
@@ -519,12 +624,12 @@ async def api_confirm_payment(order_id: int, request: Request):
     if not order:
         raise HTTPException(status_code=404, detail="Pedido no encontrado")
 
-    update_order_status(order_id, "CONFIRMADA", changed_by="ADMIN", notes="Pago confirmado y verificado desde el panel administrativo")
+    update_order_status(order_id, "CONFIRMADA", changed_by="ADMIN", notes="Pago confirmado y verificado desde el panel administrativo", notify_client=False)
     base_url = str(request.base_url).rstrip("/")
     sent_ok = await _notify_payment_confirmation(order, base_url)
     return {
         "status": "ok",
-        "message": f"Pago confirmado exitosamente y notificación enviada a {order['client_name']}",
+        "message": f"Pago confirmado exitosamente y factura en PDF enviada por WhatsApp a {order['client_name']}",
         "whatsapp_sent": sent_ok
     }
 

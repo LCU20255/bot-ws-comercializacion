@@ -712,7 +712,7 @@ def update_order(order_id: int, data: Dict[str, Any]) -> bool:
     conn.close()
     return True
 
-def update_order_status(order_id: int, status: str, changed_by: str = "ADMIN", notes: str = "") -> bool:
+def update_order_status(order_id: int, status: str, changed_by: str = "ADMIN", notes: str = "", notify_client: bool = True) -> bool:
     """
     Actualiza el estatus de un pedido y gestiona automáticamente el inventario Kardex:
     - Si se cambia a CANCELADO/ANULADO: Retorna los productos al stock y crea movimiento REVERSO_CANCELACION en Kardex.
@@ -824,8 +824,8 @@ def update_order_status(order_id: int, status: str, changed_by: str = "ADMIN", n
         except Exception as e:
             logger.error(f"Error registrando auditoría de estado para pedido {order_id}: {e}")
 
-    # Notificación automática de Pago Confirmado al cliente vía WhatsApp
-    if new_status == "CONFIRMADA" and old_status != "CONFIRMADA":
+    # Notificación automática de Pago Confirmado al cliente vía WhatsApp (si notify_client es True)
+    if notify_client and new_status == "CONFIRMADA" and old_status != "CONFIRMADA":
         try:
             from app.whatsapp_service import wa_service
             cfg = get_all_config()

@@ -60,13 +60,13 @@ def get_session(phone: str) -> Dict[str, Any]:
     return user_sessions[phone]
 
 def reset_session(phone: str, keep_registration: bool = True):
-    existing = user_sessions.get(phone, {})
+    existing = user_sessions.setdefault(phone, {})
     existing_client = get_client_by_phone(phone) if not existing.get("client_name") else None
     name = existing.get("client_name") or (existing_client.get("name") if existing_client else None)
     ci = existing.get("cedula") or (existing_client.get("cedula") if existing_client else None)
     c_phone = existing.get("contact_phone") or (existing_client.get("phone") if existing_client else None)
     is_reg = bool(name and ci) if keep_registration else False
-    user_sessions[phone] = {
+    new_data = {
         "state": "CATALOG" if is_reg else "REGISTER_NAME",
         "is_registered": is_reg,
         "welcome_sent": is_reg,
@@ -88,6 +88,9 @@ def reset_session(phone: str, keep_registration: bool = True):
         "is_off_hours": 0,
         "last_interaction": datetime.now()
     }
+    existing.clear()
+    existing.update(new_data)
+    return existing
 
 class BotFlowManager:
     """
@@ -217,8 +220,69 @@ class BotFlowManager:
                 session["state"] = "REGISTER_NAME"
                 return self._prompt_initial_registration(session, phone)
 
-        # Saludo prioritario: si el cliente ya está registrado, saludar por su nombre y mostrar catálogo de inmediato
-        if analysis["intent"] == "GREETING" and session.get("is_registered"):
+        # Manejo contextual de saludos o risas dentro de un pedido en proceso (no reiniciar ni romper flujo)
+        in_flow_states = [
+            "SELECTING_SIZE", "SELECTING_QUANTITY", "CONFIRMING_LIMITED_STOCK",
+            "CART_VIEW", "ADDING_MORE", "AWAITING_PAYMENT", "CONFIRMING_PAYMENT_DATA",
+            "AWAITING_SCHEDULE", "WAITLIST_CONFIRM", "WAITLIST_PRODUCT", "WAITLIST_NAME"
+        ]
+        is_laugh = bool(re.search(r'\b(jaj[a-z]*|hah[a-z]*|jeje[a-z]*|xd|lol)\b', clean_text.lower()))
+        is_greeting = analysis.get("intent") == "GREETING"
+
+        if (is_greeting or is_laugh) and current_state in in_flow_states:
+            client_name = session.get("client_name", "Cliente")
+            if current_state == "SELECTING_SIZE":
+                pending = session.get("pending_item")
+                pname = pending["product"]["name"] if pending else "su prenda"
+                return {
+                    "reply": f"👋 Hola, {client_name}. Para continuar con su solicitud de *{pname}*, por favor seleccione la talla deseada de las opciones indicadas.",
+                    "image_url": None,
+                    "state": "SELECTING_SIZE"
+                }
+            elif current_state == "SELECTING_QUANTITY":
+                pending = session.get("pending_item")
+                pname = pending["product"]["name"] if pending else "su producto"
+                return {
+                    "reply": f"👋 Para continuar con su solicitud de *{pname}*, por favor indique en un número cuántas unidades desea solicitar (ejemplo: 1, 2, 5...).",
+                    "image_url": None,
+                    "state": "SELECTING_QUANTITY"
+                }
+            elif current_state == "CONFIRMING_LIMITED_STOCK":
+                warn = session.get("stock_warning_item")
+                avail = warn["avail_stock"] if warn else 0
+                return {
+                    "reply": f"👉 Por favor indique si desea llevar las *{avail} unidades disponibles* respondiendo *1*, o *2* para elegir otra cantidad.",
+                    "image_url": None,
+                    "state": "CONFIRMING_LIMITED_STOCK"
+                }
+            elif current_state == "CART_VIEW":
+                return self._build_cart_view(session)
+            elif current_state in ["AWAITING_PAYMENT", "CONFIRMING_PAYMENT_DATA"]:
+                return {
+                    "reply": (
+                        f"👋 Para procesar su pedido actual (Total: ${session.get('amount_usd', 0):.2f} Ref / Bs. {session.get('amount_ves', 0):,.2f}), "
+                        "por favor adjunte su comprobante de pago o escriba los datos (Banco, Referencia y Fecha).\n\n"
+                        "*(Escriba CANCELAR si desea anular este pedido)*"
+                    ),
+                    "image_url": None,
+                    "state": current_state
+                }
+            elif current_state == "AWAITING_SCHEDULE":
+                return {
+                    "reply": "👋 Ya casi completamos su solicitud. Por favor elija el día y hora de retiro de su pedido en nuestra sede.",
+                    "image_url": None,
+                    "state": "AWAITING_SCHEDULE"
+                }
+            elif current_state in ["WAITLIST_CONFIRM", "WAITLIST_PRODUCT", "WAITLIST_NAME"]:
+                pname = session.get("waitlist_product_name", "el artículo")
+                return {
+                    "reply": f"👋 Para registrar su aviso de stock para *{pname}*, por favor responda *1* para confirmar o *2* para volver al catálogo.",
+                    "image_url": None,
+                    "state": current_state
+                }
+
+        # Saludo prioritario: si el cliente ya está registrado y en catálogo/inicio, saludar y mostrar catálogo
+        if analysis["intent"] == "GREETING" and session.get("is_registered") and current_state in ["CATALOG", "INIT"]:
             client_name = session.get("client_name", "Cliente")
             session["state"] = "CATALOG"
             catalog_resp = self._build_catalog_menu(session, is_off_hours=is_off_hours, skip_header=True)
@@ -228,6 +292,13 @@ class BotFlowManager:
             )
             catalog_resp["reply"] = greeting_prefix + catalog_resp["reply"]
             return catalog_resp
+
+        if is_laugh and current_state in ["CATALOG", "INIT"]:
+            return {
+                "reply": "😄 ¡A su orden! Escriba el número del producto que desea adquirir o escriba *0* para ver el catálogo disponible.",
+                "image_url": None,
+                "state": "CATALOG"
+            }
 
         # Si el usuario está en espera de asesor
         if current_state == "WAITING_ADVISOR":
@@ -552,23 +623,40 @@ class BotFlowManager:
         # -------------------------------------------------------------
         # CLIENTE REGISTRADO — COMANDOS GLOBALES Y ATENCIÓN
         # -------------------------------------------------------------
-        # Comandos globales de reinicio o volver al menú
+        # Comandos globales de reinicio o volver al menú (protección de pedidos en curso)
         if clean_text.lower() in ["0", "menu", "menú", "inicio", "empezar", "reset", "cancelar"]:
+            if current_state in ["AWAITING_PAYMENT", "CONFIRMING_PAYMENT_DATA", "AWAITING_SCHEDULE", "CONFIRMING_LIMITED_STOCK"]:
+                if clean_text.lower() == "cancelar":
+                    reset_session(phone, keep_registration=True)
+                    return self._build_catalog_menu(session, is_off_hours=is_off_hours)
+                else:
+                    return {
+                        "reply": (
+                            "⚠️ *Tiene una operación de pedido en proceso.*\n\n"
+                            "Si desea anular su compra actual y volver al menú principal, escriba *CANCELAR*.\n\n"
+                            "Para continuar con su pedido, por favor complete el paso en el que se encuentra."
+                        ),
+                        "image_url": None,
+                        "state": current_state
+                    }
             reset_session(phone, keep_registration=True)
             return self._build_catalog_menu(session, is_off_hours=is_off_hours)
 
         # Detección inteligente directa de uno o varios artículos, cantidades y tallas (multilínea o compuesto)
         if current_state in ["CATALOG", "INIT", "ADDING_MORE"]:
-            catalog_products = get_available_catalog_products()
-            order_items = nlu.extract_order_items(clean_text, catalog_products)
+            all_active_products = get_products(only_active=True)
+            order_items = nlu.extract_order_items(clean_text, all_active_products)
             if order_items:
                 added_any = False
                 needs_size_item = None
+                capped_items = []
                 for itm in order_items:
                     prod = itm["product"]
                     qty = itm["qty"]
                     sz = itm.get("size")
-                    if prod.get("stock", 0) <= 0:
+                    prod_stock = int(prod.get("stock", 0))
+
+                    if prod_stock <= 0:
                         session["waitlist_product_name"] = prod["name"]
                         session["waitlist_product_id"] = prod["id"]
                         session["state"] = "WAITLIST_CONFIRM"
@@ -584,15 +672,24 @@ class BotFlowManager:
                             "state": "WAITLIST_CONFIRM"
                         }
 
+                    # Validar si la cantidad requerida supera el inventario disponible
+                    effective_qty = qty
+                    if qty > prod_stock:
+                        effective_qty = prod_stock
+                        capped_items.append(f"*{prod['name']}* (solicitó {qty}, se agregaron las {prod_stock} disponibles)")
+
                     if self._product_needs_size(prod):
                         if sz:
-                            self._add_to_cart(session, prod, qty, size=sz)
+                            self._add_to_cart(session, prod, effective_qty, size=sz)
                             added_any = True
                         else:
-                            needs_size_item = {"product": prod, "qty": qty}
+                            needs_size_item = {"product": prod, "qty": effective_qty}
                     else:
-                        self._add_to_cart(session, prod, qty)
+                        self._add_to_cart(session, prod, effective_qty)
                         added_any = True
+
+                if capped_items:
+                    session["cart_stock_capped_notice"] = "Disponibilidad limitada de inventario: " + "; ".join(capped_items)
 
                 if needs_size_item and not added_any:
                     session["pending_item"] = needs_size_item
@@ -907,7 +1004,7 @@ class BotFlowManager:
             }
 
         # -------------------------------------------------------------
-        # ESTADO 3.1: SELECCIÓN DE CANTIDAD
+        # ESTADO 3.1: SELECCIÓN DE CANTIDAD (Control estricto de Stock)
         # -------------------------------------------------------------
         elif current_state == "SELECTING_QUANTITY":
             pending = session.get("pending_item")
@@ -917,13 +1014,107 @@ class BotFlowManager:
 
             qty = self._extract_quantity(clean_text)
             if qty <= 0:
-                qty = 1
+                pname = pending["product"]["name"]
+                return {
+                    "reply": f"🔢 Por favor indique en un número cuántas unidades de *{pname}* desea solicitar (ejemplo: 1, 2, 5...):",
+                    "image_url": None,
+                    "state": "SELECTING_QUANTITY"
+                }
+
+            prod = pending["product"]
+            stock = int(prod.get("stock", 0))
+
+            if stock <= 0:
+                session["waitlist_product_name"] = prod["name"]
+                session["waitlist_product_id"] = prod["id"]
+                session["state"] = "WAITLIST_CONFIRM"
+                return {
+                    "reply": (
+                        f"⚠️ El artículo *{prod['name']}* se encuentra actualmente *AGOTADO / SIN STOCK* en nuestro inventario.\n\n"
+                        "¿Desea que le avisemos automáticamente apenas ingrese nuevo stock a nuestro almacén?\n\n"
+                        "[ 1️⃣ ] *Sí, avisarme cuando esté disponible*\n"
+                        "[ 2️⃣ ] *Ver productos disponibles en catálogo*\n\n"
+                        "👉 Responda *1* para anotarse en la lista de espera o *2* para ver el catálogo."
+                    ),
+                    "image_url": None,
+                    "state": "WAITLIST_CONFIRM"
+                }
+
+            if qty > stock:
+                session["stock_warning_item"] = {
+                    "product": prod,
+                    "requested_qty": qty,
+                    "avail_stock": stock,
+                    "size": pending.get("size")
+                }
+                session["state"] = "CONFIRMING_LIMITED_STOCK"
+                return {
+                    "reply": (
+                        f"⚠️ *Disponibilidad de Inventario*\n\n"
+                        f"Actualmente disponemos únicamente de *{stock} unidades* en existencia de *{prod['name']}* (usted solicitó {qty}).\n\n"
+                        f"[ 1️⃣ ] *Sí, llevar las {stock} unidades disponibles*\n"
+                        f"[ 2️⃣ ] *Elegir otra cantidad*\n"
+                        f"[ 3️⃣ ] *Volver al catálogo*\n\n"
+                        f"👉 *Por favor responda 1 para llevar las {stock} disponibles, 2 para cambiar la cantidad, o 3 para volver al catálogo.*"
+                    ),
+                    "image_url": None,
+                    "state": "CONFIRMING_LIMITED_STOCK"
+                }
 
             self._add_to_cart(session, pending["product"], qty, size=pending.get("size"))
             session["pending_item"] = None
             session["pending_size_options"] = None
             session["state"] = "CART_VIEW"
             return self._build_cart_view(session)
+
+        # -------------------------------------------------------------
+        # ESTADO 3.2: CONFIRMACIÓN DE STOCK LIMITADO (Disponibilidad Parcial)
+        # -------------------------------------------------------------
+        elif current_state == "CONFIRMING_LIMITED_STOCK":
+            warn = session.get("stock_warning_item")
+            if not warn:
+                session["state"] = "CATALOG"
+                return self._build_catalog_menu(session, is_off_hours=is_off_hours)
+
+            if clean_text in ["1", "si", "sí", "llevar", "todas", "disponibles", "las disponibles"]:
+                self._add_to_cart(session, warn["product"], warn["avail_stock"], size=warn.get("size"))
+                session.pop("stock_warning_item", None)
+                session.pop("pending_item", None)
+                session["state"] = "CART_VIEW"
+                return self._build_cart_view(session)
+            elif clean_text in ["2", "otra", "cambiar", "otra cantidad"]:
+                prod = warn["product"]
+                session["pending_item"] = {"product": prod, "size": warn.get("size")}
+                session.pop("stock_warning_item", None)
+                session["state"] = "SELECTING_QUANTITY"
+                return {
+                    "reply": f"🔢 Por favor indique cuántas unidades desea solicitar de *{prod['name']}* (máximo {warn['avail_stock']} disponibles):",
+                    "image_url": None,
+                    "state": "SELECTING_QUANTITY"
+                }
+            elif clean_text in ["3", "catalogo", "catálogo", "0", "volver", "cancelar"]:
+                session.pop("stock_warning_item", None)
+                session.pop("pending_item", None)
+                session["state"] = "CATALOG"
+                return self._build_catalog_menu(session, is_off_hours=is_off_hours)
+            else:
+                if clean_text.isdigit():
+                    num_val = int(clean_text)
+                    if 1 <= num_val <= warn["avail_stock"]:
+                        self._add_to_cart(session, warn["product"], num_val, size=warn.get("size"))
+                        session.pop("stock_warning_item", None)
+                        session.pop("pending_item", None)
+                        session["state"] = "CART_VIEW"
+                        return self._build_cart_view(session)
+
+                return {
+                    "reply": (
+                        f"👉 Por favor responda *1* para llevar las *{warn['avail_stock']} unidades disponibles*,\n"
+                        f"*2* para indicar otra cantidad (hasta {warn['avail_stock']}), o *3* para volver al catálogo."
+                    ),
+                    "image_url": None,
+                    "state": "CONFIRMING_LIMITED_STOCK"
+                }
 
         # -------------------------------------------------------------
         # ESTADO 4: VISTA DE CARRITO (Montos duales $ y Bs BCV)
@@ -1007,70 +1198,126 @@ class BotFlowManager:
         # ESTADO 5: ESPERANDO PAGO / COMPROBANTE
         # -------------------------------------------------------------
         elif current_state == "AWAITING_PAYMENT":
-            if clean_text in ["0", "menu", "menú", "cancelar"]:
+            if clean_text.lower() == "cancelar":
                 reset_session(phone, keep_registration=True)
                 return self._build_catalog_menu(session, is_off_hours=is_off_hours)
 
-            # El usuario puede ingresar datos de pago por texto (ej: "Pago movil banco mercantil ref 1234567 monto 1500 bs")
+            # El usuario puede ingresar datos de pago por texto (ej: "Pago movil banco mercantil ref 1234567 fecha 06/10/2026")
             text_receipt = ReceiptOCRService.parse_text_fields(clean_text)
-            if text_receipt["reference"] != "S/REF" or text_receipt["bank"] != "DESCONOCIDO" or text_receipt["amount"] > 0:
-                session["manual_payment_data"] = clean_text
-                return self._apply_receipt_to_session(session, text_receipt)
+            
+            # Chequear dígitos sueltos de referencia si no vino etiquetada
+            if text_receipt["reference"] == "S/REF":
+                digits_match = re.search(r'\b\d{4,12}\b', clean_text)
+                if digits_match:
+                    text_receipt["reference"] = digits_match.group(0)
 
-            # Si no detectó formato de pago, reiterar instrucción de subir foto o escribir datos
+            # Chequear fecha contextual ("hoy" / "ayer")
+            if not text_receipt.get("date_detected"):
+                if "hoy" in clean_text.lower():
+                    text_receipt["payment_date"] = now_vet_date_str()
+                    text_receipt["date_detected"] = True
+                elif "ayer" in clean_text.lower():
+                    from datetime import timedelta
+                    text_receipt["payment_date"] = (now_vet() - timedelta(days=1)).strftime("%Y-%m-%d")
+                    text_receipt["date_detected"] = True
+
+            has_ref = (text_receipt["reference"] != "S/REF")
+            has_bank = (text_receipt["bank"] != "DESCONOCIDO")
+            has_date = bool(text_receipt.get("date_detected"))
+
+            # Si el usuario aportó algún dato de pago por escrito
+            if has_ref or has_bank or text_receipt["amount"] > 0:
+                if has_ref and has_bank and has_date:
+                    session["manual_payment_data"] = clean_text
+                    return self._apply_receipt_to_session(session, text_receipt)
+                else:
+                    session["pending_receipt_data"] = text_receipt
+                    session["state"] = "CONFIRMING_PAYMENT_DATA"
+                    return self._build_missing_payment_data_prompt(text_receipt)
+
+            # Si no detectó formato de pago, reiterar instrucción de subir foto o escribir los 3 datos
             return {
                 "reply": (
                     "📸 *CONSIGNACIÓN DE COMPROBANTE*\n\n"
                     "Para coordinar la entrega y fecha de retiro, por favor *adjunte la foto o captura de su pago móvil o transferencia*.\n\n"
-                    "✍️ *O si lo prefiere, escriba los datos de su operación:* Banco emisor, Nro. de Referencia y Monto cancelado.\n"
-                    "*(Escriba 0 si desea volver al menú)*"
+                    "✍️ *O si lo prefiere, escriba los datos obligatorios de su operación:*\n"
+                    "• *Banco Emisor* (ej: Mercantil, Banesco, BDV)\n"
+                    "• *Nro. de Referencia* (4 a 12 dígitos)\n"
+                    "• *Fecha de Pago* (DD/MM/AAAA o indicar 'hoy'/'ayer')\n\n"
+                    "*(Escriba CANCELAR si desea anular este pedido)*"
                 ),
                 "image_url": None,
                 "state": "AWAITING_PAYMENT"
             }
 
         # -------------------------------------------------------------
-        # ESTADO 5.1: CORROBORACIÓN DE DATOS DE PAGO (Híbrido)
+        # ESTADO 5.1: CORROBORACIÓN DE DATOS DE PAGO (3 Datos Obligatorios)
         # -------------------------------------------------------------
         elif current_state == "CONFIRMING_PAYMENT_DATA":
-            if clean_text in ["0", "menu", "menú", "cancelar"]:
+            if clean_text.lower() == "cancelar":
                 reset_session(phone, keep_registration=True)
                 return self._build_catalog_menu(session, is_off_hours=is_off_hours)
 
             text_receipt = ReceiptOCRService.parse_text_fields(clean_text)
             pending_data = session.get("pending_receipt_data", {})
 
-            # Extraer referencia: del texto analizado, o cualquier secuencia de 4 a 16 dígitos en el texto del cliente
-            final_ref = text_receipt["reference"] if text_receipt["reference"] != "S/REF" else pending_data.get("reference", "S/REF")
-            if final_ref == "S/REF":
-                digits_match = re.search(r'\b\d{4,16}\b', clean_text)
-                if digits_match:
-                    final_ref = digits_match.group(0)
+            # Consolidar Referencia
+            final_ref = pending_data.get("reference")
+            if not final_ref or final_ref == "S/REF":
+                if text_receipt["reference"] != "S/REF":
+                    final_ref = text_receipt["reference"]
                 else:
-                    final_ref = clean_text.strip()[:20]
+                    digits_match = re.search(r'\b\d{4,12}\b', clean_text)
+                    if digits_match:
+                        final_ref = digits_match.group(0)
 
-            final_bank = text_receipt["bank"] if text_receipt["bank"] != "DESCONOCIDO" else pending_data.get("bank", "BANCO NACIONAL")
-            if final_bank == "DESCONOCIDO":
-                final_bank = "BANCO NACIONAL"
+            # Consolidar Banco
+            final_bank = pending_data.get("bank")
+            if not final_bank or final_bank == "DESCONOCIDO":
+                if text_receipt["bank"] != "DESCONOCIDO":
+                    final_bank = text_receipt["bank"]
+
+            # Consolidar Fecha
+            final_date = pending_data.get("payment_date")
+            date_detected = pending_data.get("date_detected", False)
+            if not date_detected:
+                if text_receipt.get("date_detected"):
+                    final_date = text_receipt["payment_date"]
+                    date_detected = True
+                elif "hoy" in clean_text.lower():
+                    final_date = now_vet_date_str()
+                    date_detected = True
+                elif "ayer" in clean_text.lower():
+                    from datetime import timedelta
+                    final_date = (now_vet() - timedelta(days=1)).strftime("%Y-%m-%d")
+                    date_detected = True
 
             final_amount = text_receipt["amount"] if text_receipt["amount"] > 0 else pending_data.get("amount", 0.0)
-            final_date = text_receipt["payment_date"] if text_receipt.get("date_detected") else pending_data.get("payment_date", now_vet_date_str())
 
             combined_receipt = {
-                "bank": final_bank,
-                "reference": final_ref,
+                "bank": final_bank or "DESCONOCIDO",
+                "reference": final_ref or "S/REF",
                 "amount": final_amount,
                 "currency": text_receipt.get("currency", "VES"),
-                "payment_date": final_date,
-                "date_detected": True,
+                "payment_date": final_date or now_vet_date_str(),
+                "date_detected": date_detected,
                 "payer_id": text_receipt.get("payer_id") or pending_data.get("payer_id"),
                 "concept": text_receipt.get("concept") or pending_data.get("concept"),
                 "raw_text": (pending_data.get("raw_text", "") + "\nReportado por cliente: " + clean_text).strip(),
                 "ocr_ok": True
             }
-            session["manual_payment_data"] = clean_text
-            session.pop("pending_receipt_data", None)
-            return self._apply_receipt_to_session(session, combined_receipt)
+
+            has_bank = (combined_receipt["bank"] != "DESCONOCIDO")
+            has_ref = (combined_receipt["reference"] != "S/REF")
+            has_date = bool(combined_receipt["date_detected"])
+
+            if has_bank and has_ref and has_date:
+                session["manual_payment_data"] = clean_text
+                session.pop("pending_receipt_data", None)
+                return self._apply_receipt_to_session(session, combined_receipt)
+            else:
+                session["pending_receipt_data"] = combined_receipt
+                return self._build_missing_payment_data_prompt(combined_receipt)
 
         # -------------------------------------------------------------
         # ESTADO 6: AGENDAMIENTO DE RETIRO POST-PAGO (Fecha y Hora con Botones)
@@ -1195,21 +1442,69 @@ class BotFlowManager:
         
         logger.info(f"Comprobante recibido para {phone}: Banco={parsed['bank']}, Ref={parsed['reference']}, Monto={parsed['amount']}")
         
+        # 1. Si el cliente no tiene carrito activo ni está en espera de pago, no tratar como comprobante ni crear bucle
+        if not session.get("cart") and session.get("state") not in ["AWAITING_PAYMENT", "CONFIRMING_PAYMENT_DATA"]:
+            client_name = session.get("client_name") or "Estimado cliente"
+            return {
+                "reply": (
+                    f"📸 Hemos recibido su imagen, *{client_name}*.\n\n"
+                    "En este momento no tiene ningún pedido pendiente por pagar en nuestro sistema.\n\n"
+                    "👉 Si desea iniciar una compra, escriba *0* para ver nuestro catálogo disponible.\n"
+                    "👉 Si desea consultar con nuestro equipo humano, escriba *ASESOR*."
+                ),
+                "image_url": None,
+                "state": session.get("state", "CATALOG")
+            }
+
         if session["state"] != "AWAITING_PAYMENT" and session["cart"]:
             session["state"] = "AWAITING_PAYMENT"
 
-        # Si el análisis extrajo exitosamente tanto la referencia como el banco
-        if parsed.get("reference") != "S/REF" and parsed.get("bank") != "DESCONOCIDO":
+        # 2. Exigir obligatoriamente los 3 datos: Banco Emisor, Nro. Referencia y Fecha de Pago
+        has_ref = (parsed.get("reference") != "S/REF")
+        has_bank = (parsed.get("bank") != "DESCONOCIDO")
+        has_date = bool(parsed.get("date_detected"))
+
+        if has_ref and has_bank and has_date:
             return self._apply_receipt_to_session(session, parsed)
 
-        # Si requiere corroborar número de referencia o banco emisor (sin tecnicismos al cliente)
+        # Si falta alguno de los 3 datos, solicitar específicamente el que falte
         session["pending_receipt_data"] = parsed
         session["state"] = "CONFIRMING_PAYMENT_DATA"
+        return self._build_missing_payment_data_prompt(parsed)
+
+    def _build_missing_payment_data_prompt(self, receipt_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Solicita educadamente al cliente los datos de pago que falten (Banco, Ref o Fecha)."""
+        bank = receipt_data.get("bank")
+        ref = receipt_data.get("reference")
+        date_ok = receipt_data.get("date_detected")
+        pdate = receipt_data.get("payment_date")
+
+        bank_ok = bool(bank and bank != "DESCONOCIDO")
+        ref_ok = bool(ref and ref != "S/REF")
+
+        bank_display = f"*{bank}*" if bank_ok else "❌ _Pendiente_"
+        ref_display = f"`{ref}`" if ref_ok else "❌ _Pendiente_"
+        date_display = f"*{format_date_dmy(pdate)}*" if (date_ok and pdate) else "❌ _Pendiente_"
+
+        missing = []
+        if not bank_ok:
+            missing.append("el *Banco Emisor* (ej: Mercantil, Banesco, BDV)")
+        if not ref_ok:
+            missing.append("el *Número de Referencia* (4 a 12 dígitos)")
+        if not date_ok:
+            missing.append("la *Fecha de Pago* (DD/MM/AAAA o indicar 'hoy'/'ayer')")
+
+        missing_text = " y ".join(missing) if len(missing) <= 2 else (", ".join(missing[:-1]) + f" y {missing[-1]}")
+
         return {
             "reply": (
-                "📸 *Hemos recibido la imagen de su comprobante.*\n\n"
-                "Para garantizar la rápida y exacta conciliación de su pago, por favor facilítenos a continuación el *número de referencia* y el *banco emisor* desde el que realizó la operación:\n"
-                "*(Por ejemplo: Ref 12345678 Banco Mercantil)*"
+                "⚠️ *VERIFICACIÓN DE COMPROBANTE DE PAGO*\n\n"
+                "Para garantizar la exactitud de su conciliación bancaria y aplicar la tasa BCV oficial del día correspondiente, hemos detectado:\n\n"
+                f"• 🏦 *Banco Emisor:* {bank_display}\n"
+                f"• 🔢 *Nro. de Referencia:* {ref_display}\n"
+                f"• 📅 *Fecha de Pago:* {date_display}\n\n"
+                f"👉 *Por favor facilítenos:* {missing_text}.\n\n"
+                "*(Escriba CANCELAR si desea anular este pedido)*"
             ),
             "image_url": None,
             "state": "CONFIRMING_PAYMENT_DATA"
@@ -1511,15 +1806,19 @@ class BotFlowManager:
             lines.append(f"[ {advisor_idx}️⃣ ] 👨‍💼 *Hablar con un Asesor Comercial*")
             lines.append(f"\n👉 *Elige el número (1-{len(products)}) o escribe el producto que deseas:*")
 
+        session["state"] = "CATALOG"
         return {
             "reply": "\n".join(lines),
             "image_url": None,
-            "state": session.get("state", "CATALOG")
+            "state": "CATALOG"
         }
 
     def _build_cart_view(self, session: Dict[str, Any]) -> Dict[str, Any]:
         cart = session["cart"]
-        lines = ["✅ *Usted ha elegido:*"]
+        lines = []
+        if session.get("cart_stock_capped_notice"):
+            lines.append(f"⚠️ *{session.pop('cart_stock_capped_notice')}*\n")
+        lines.append("✅ *Usted ha elegido:*")
         last_image = None
         for item in cart:
             sz_str = f" (Talla: {item['size']})" if item.get("size") else ""
@@ -1660,6 +1959,7 @@ class BotFlowManager:
         cart = session["cart"]
         pid = product["id"]
         unit_price = self._safe_float(product.get("price", 0.0))
+        prod_stock = int(product.get("stock", 0))
 
         display_name = str(product["name"]).upper()
         if size:
@@ -1667,18 +1967,25 @@ class BotFlowManager:
 
         for item in cart:
             if item["product_id"] == pid and item.get("size") == size:
-                item["qty"] += qty
+                new_qty = item["qty"] + qty
+                if prod_stock > 0 and new_qty > prod_stock:
+                    new_qty = prod_stock
+                item["qty"] = new_qty
                 item["subtotal"] = item["qty"] * unit_price
                 return
+
+        effective_qty = qty
+        if prod_stock > 0 and effective_qty > prod_stock:
+            effective_qty = prod_stock
 
         cart.append({
             "product_id": pid,
             "name": display_name,
             "raw_name": str(product["name"]).upper(),
             "size": size.strip().upper() if size else None,
-            "qty": qty,
+            "qty": effective_qty,
             "unit_price": unit_price,
-            "subtotal": qty * unit_price,
+            "subtotal": effective_qty * unit_price,
             "image_url": product.get("image_url")
         })
 

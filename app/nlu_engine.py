@@ -126,7 +126,18 @@ class NLUEngine:
                 "extracted_data": extracted_data
             }
 
-        # 5. If a product was clearly identified for purchase / selection
+        # 4.5 Check if message contains multiple products, quantities, or order items (even with greeting)
+        order_items = self.extract_order_items(clean_text)
+        if order_items:
+            return {
+                "intent": "PRODUCT_SELECTED",
+                "matched_product": order_items[0]["product"] if order_items else matched_prod,
+                "confidence": 0.90,
+                "extracted_data": extracted_data,
+                "order_items": order_items
+            }
+
+        # 5. If a single product was clearly identified for purchase / selection
         if matched_prod:
             return {
                 "intent": "PRODUCT_SELECTED",
@@ -135,7 +146,16 @@ class NLUEngine:
                 "extracted_data": extracted_data
             }
 
-        # 6. Basic greetings
+        # 5.5 Detección de risas o expresiones conversacionales sueltas
+        if re.search(r'\b(jaj[a-z]*|hah[a-z]*|jeje[a-z]*|xd|lol)\b', lower_text):
+            return {
+                "intent": "LAUGH",
+                "matched_product": None,
+                "confidence": 0.95,
+                "extracted_data": extracted_data
+            }
+
+        # 6. Basic greetings (solo si no es compra)
         greeting_words = [
             "hola", "buenas", "buenos dias", "buenos días", "buenas tardes", "buenas noches",
             "saludos", "que tal", "qué tal", "epale", "épale", "inicio", "empezar", "menu", "menú",

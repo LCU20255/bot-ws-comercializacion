@@ -139,6 +139,65 @@ class WhatsAppService:
             t.start()
             return True
 
+    async def send_document(
+        self,
+        to_phone: str,
+        document_path: Optional[str] = None,
+        document_bytes: Optional[bytes] = None,
+        file_name: str = "Comprobante_Orden_Compra.pdf",
+        caption: str = ""
+    ) -> bool:
+        """
+        Envía un documento PDF formal al número de WhatsApp del cliente.
+        Prioriza puente Baileys local (http://127.0.0.1:3001/send), y fallback a log.
+        """
+        import os
+        import base64
+
+        # 1. Intentar enviar a través del puente Baileys local
+        try:
+            payload = {
+                "phone": to_phone,
+                "text": caption,
+                "file_name": file_name
+            }
+            if document_path and os.path.exists(document_path):
+                payload["document_path"] = str(document_path)
+            elif document_bytes:
+                payload["document_base64"] = base64.b64encode(document_bytes).decode("utf-8")
+
+            async with httpx.AsyncClient(timeout=10.0) as b_client:
+                b_res = await b_client.post("http://127.0.0.1:3001/send", json=payload)
+                if b_res.status_code == 200:
+                    logger.info(f"Documento PDF '{file_name}' enviado exitosamente vía Baileys a {to_phone}")
+                    return True
+        except Exception as e:
+            logger.warning(f"No se pudo enviar PDF vía Baileys a {to_phone}: {e}")
+
+        # 2. Si no hay conexión Baileys, registrar simulación
+        logger.info(f"[SIMULADO / LOG] Documento PDF '{file_name}' despachado a WhatsApp {to_phone} con texto:\n{caption}")
+        return True
+
+    def send_document_sync(
+        self,
+        to_phone: str,
+        document_path: Optional[str] = None,
+        document_bytes: Optional[bytes] = None,
+        file_name: str = "Comprobante_Orden_Compra.pdf",
+        caption: str = ""
+    ) -> bool:
+        import asyncio
+        import threading
+        try:
+            loop = asyncio.get_running_loop()
+            asyncio.create_task(self.send_document(to_phone, document_path, document_bytes, file_name, caption))
+            return True
+        except RuntimeError:
+            t = threading.Thread(target=lambda: asyncio.run(self.send_document(to_phone, document_path, document_bytes, file_name, caption)))
+            t.daemon = True
+            t.start()
+            return True
+
 wa_service = WhatsAppService()
 
 def notify_waitlist_stock_available(product_id: int, product_name: str) -> int:

@@ -1,0 +1,993 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flujograma Interactivo — SIS-COMER (Complejo Industrial Tiuna)</title>
+    <!-- Fuentes Google -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Mermaid.js -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+
+    <style>
+        :root {
+            --bg-primary: #0a0f1d;
+            --bg-secondary: #111827;
+            --bg-card: rgba(17, 24, 39, 0.75);
+            --bg-card-hover: rgba(30, 41, 59, 0.85);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --border-glow: rgba(59, 130, 246, 0.3);
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --primary: #3b82f6;
+            --primary-glow: rgba(59, 130, 246, 0.4);
+            --success: #10b981;
+            --success-glow: rgba(16, 185, 129, 0.3);
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --purple: #8b5cf6;
+            --cyan: #06b6d4;
+            --font-main: 'Outfit', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: var(--font-main);
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            overflow-x: hidden;
+            background-image: 
+                radial-gradient(circle at 15% 15%, rgba(59, 130, 246, 0.08) 0%, transparent 40%),
+                radial-gradient(circle at 85% 85%, rgba(139, 92, 246, 0.08) 0%, transparent 40%),
+                radial-gradient(circle at 50% 50%, rgba(16, 185, 129, 0.05) 0%, transparent 50%);
+            min-height: 100vh;
+        }
+
+        /* Top Bar */
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.25rem 2.5rem;
+            background: rgba(10, 15, 29, 0.85);
+            backdrop-filter: blur(16px);
+            border-bottom: 1px solid var(--border-color);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .brand-badge {
+            background: linear-gradient(135deg, #2563eb, #1d4ed8);
+            color: white;
+            padding: 0.5rem 0.85rem;
+            border-radius: 10px;
+            font-weight: 800;
+            font-size: 1.1rem;
+            letter-spacing: 0.05em;
+            box-shadow: 0 4px 15px rgba(37, 99, 235, 0.35);
+        }
+
+        .brand-title h1 {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: #fff;
+            letter-spacing: -0.01em;
+        }
+
+        .brand-title p {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        .top-actions {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.55rem 1.15rem;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.875rem;
+            text-decoration: none;
+            transition: all 0.25s ease;
+            cursor: pointer;
+            border: 1px solid transparent;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #3b82f6, #2563eb);
+            color: white;
+            box-shadow: 0 4px 12px var(--primary-glow);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 18px var(--primary-glow);
+        }
+
+        .btn-ghost {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-secondary);
+            border: 1px solid var(--border-color);
+        }
+
+        .btn-ghost:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        /* Hero */
+        .hero {
+            padding: 3rem 2.5rem 2rem 2.5rem;
+            text-align: center;
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        .hero-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.35rem 0.9rem;
+            border-radius: 999px;
+            background: rgba(59, 130, 246, 0.15);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            color: #60a5fa;
+            font-size: 0.825rem;
+            font-weight: 600;
+            margin-bottom: 1.25rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .hero h2 {
+            font-size: 2.75rem;
+            font-weight: 800;
+            letter-spacing: -0.03em;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, #ffffff 40%, #94a3b8 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .hero p {
+            font-size: 1.125rem;
+            color: var(--text-secondary);
+            margin-bottom: 2rem;
+            max-width: 750px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        /* Pillars / Metric Highlights */
+        .pillars-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 1.25rem;
+            max-width: 1300px;
+            margin: 0 auto 3rem auto;
+            padding: 0 2.5rem;
+        }
+
+        .pillar-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 14px;
+            padding: 1.35rem;
+            backdrop-filter: blur(12px);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .pillar-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 4px;
+            height: 100%;
+            background: var(--primary);
+        }
+
+        .pillar-card.p-success::before { background: var(--success); }
+        .pillar-card.p-warning::before { background: var(--warning); }
+        .pillar-card.p-purple::before { background: var(--purple); }
+        .pillar-card.p-cyan::before { background: var(--cyan); }
+
+        .pillar-card:hover {
+            transform: translateY(-4px);
+            background: var(--bg-card-hover);
+            border-color: rgba(255, 255, 255, 0.15);
+        }
+
+        .pillar-icon {
+            font-size: 1.5rem;
+            margin-bottom: 0.75rem;
+            display: inline-block;
+        }
+
+        .pillar-card h3 {
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 0.35rem;
+        }
+
+        .pillar-card p {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            line-height: 1.45;
+        }
+
+        /* View Toggle Tabs */
+        .tabs-container {
+            display: flex;
+            justify-content: center;
+            gap: 0.5rem;
+            margin: 0 auto 2.5rem auto;
+            background: rgba(17, 24, 39, 0.9);
+            padding: 0.35rem;
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            max-width: fit-content;
+        }
+
+        .tab-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            font-family: var(--font-main);
+            font-weight: 600;
+            font-size: 0.9rem;
+            padding: 0.6rem 1.4rem;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .tab-btn.active {
+            background: linear-gradient(135deg, #2563eb, #1d4ed8);
+            color: white;
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+        }
+
+        .tab-btn:hover:not(.active) {
+            color: white;
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        /* Diagram View Section */
+        .section-wrapper {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 2.5rem 4rem 2.5rem;
+        }
+
+        .diagram-box {
+            background: rgba(15, 23, 42, 0.75);
+            border: 1px solid var(--border-color);
+            border-radius: 18px;
+            padding: 2.5rem 1.5rem;
+            backdrop-filter: blur(16px);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+            position: relative;
+            overflow-x: auto;
+        }
+
+        .diagram-toolbar {
+            position: absolute;
+            top: 1.25rem;
+            right: 1.5rem;
+            display: flex;
+            gap: 0.5rem;
+            background: rgba(10, 15, 29, 0.8);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 0.25rem;
+            z-index: 10;
+        }
+
+        .tool-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            padding: 0.4rem 0.75rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.2s ease;
+        }
+
+        .tool-btn:hover {
+            color: #fff;
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .mermaid {
+            display: flex;
+            justify-content: center;
+            min-height: 600px;
+        }
+
+        /* Flow Steps Grid (Simulator View) */
+        .steps-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .step-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 1.75rem;
+            backdrop-filter: blur(14px);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+        }
+
+        .step-card:hover {
+            transform: translateY(-4px);
+            border-color: var(--border-glow);
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+        }
+
+        .step-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 1rem;
+        }
+
+        .step-badge {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 0.3rem 0.65rem;
+            border-radius: 6px;
+            letter-spacing: 0.05em;
+        }
+
+        .badge-blue { background: rgba(59, 130, 246, 0.2); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.3); }
+        .badge-green { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.3); }
+        .badge-orange { background: rgba(245, 158, 11, 0.2); color: #fcd34d; border: 1px solid rgba(245, 158, 11, 0.3); }
+        .badge-purple { background: rgba(139, 92, 246, 0.2); color: #c4b5fd; border: 1px solid rgba(139, 92, 246, 0.3); }
+        .badge-red { background: rgba(239, 68, 68, 0.2); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.3); }
+
+        .step-number {
+            font-size: 1.5rem;
+            font-weight: 800;
+            color: rgba(255, 255, 255, 0.15);
+        }
+
+        .step-card h4 {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 0.5rem;
+        }
+
+        .step-desc {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            margin-bottom: 1.25rem;
+            line-height: 1.5;
+        }
+
+        .step-box {
+            background: rgba(0, 0, 0, 0.35);
+            border-radius: 10px;
+            padding: 0.85rem;
+            margin-bottom: 0.75rem;
+            border-left: 3px solid var(--primary);
+        }
+
+        .step-box.box-green { border-left-color: var(--success); }
+        .step-box.box-orange { border-left-color: var(--warning); }
+        .step-box.box-red { border-left-color: var(--danger); }
+
+        .box-title {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            margin-bottom: 0.35rem;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        .box-content {
+            font-family: var(--font-mono);
+            font-size: 0.825rem;
+            color: #e2e8f0;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        /* Rules of Business Table */
+        .rules-table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            background: var(--bg-card);
+            border-radius: 14px;
+            border: 1px solid var(--border-color);
+            overflow: hidden;
+        }
+
+        .rules-table th {
+            background: rgba(30, 41, 59, 0.6);
+            padding: 1rem 1.25rem;
+            text-align: left;
+            font-weight: 700;
+            font-size: 0.85rem;
+            color: #fff;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .rules-table td {
+            padding: 1.15rem 1.25rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+
+        .rules-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .rules-table tr:hover td {
+            background: rgba(255, 255, 255, 0.02);
+            color: #fff;
+        }
+
+        .rule-title {
+            color: #fff;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            padding: 3rem 1.5rem;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            border-top: 1px solid var(--border-color);
+            background: rgba(10, 15, 29, 0.6);
+        }
+
+        /* Animation Keyframes */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .fade-in {
+            animation: fadeIn 0.4s ease forwards;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- TOPBAR -->
+    <header class="topbar">
+        <div class="brand">
+            <div class="brand-badge">CIT</div>
+            <div class="brand-title">
+                <h1>SIS-COMER · Flujograma del Bot</h1>
+                <p>Complejo Industrial Tiuna — Sistema de Ventas WhatsApp v2.5</p>
+            </div>
+        </div>
+        <div class="top-actions">
+            <a href="/admin" class="btn btn-ghost">
+                <i class="fa-solid fa-gauge-high"></i> Panel Administrativo
+            </a>
+            <a href="javascript:window.print()" class="btn btn-primary">
+                <i class="fa-solid fa-print"></i> Exportar / Imprimir
+            </a>
+        </div>
+    </header>
+
+    <!-- HERO -->
+    <section class="hero">
+        <div class="hero-tag">
+            <i class="fa-solid fa-diagram-project"></i> Arquitectura Conversacional & Resiliencia
+        </div>
+        <h2>Flujograma Integral del Asistente Virtual</h2>
+        <p>
+            Documentación visual y funcional de todos los estados del bot comercial de WhatsApp: control estricto de inventario, detección multilínea, lista de espera, OCR con corroboración de 3 campos y facturación digital en PDF.
+        </p>
+    </section>
+
+    <!-- PILLARS HIGHLIGHT -->
+    <section class="pillars-grid">
+        <div class="pillar-card p-cyan">
+            <div class="pillar-icon">📦</div>
+            <h3>Control Anti-Sobrevendidos</h3>
+            <p>Si el usuario solicita más stock del disponible (ej: pide 50 y hay 30), el bot ofrece llevar las 30 exactas o corregir la cantidad, sin sobreventa.</p>
+        </div>
+        <div class="pillar-card p-warning">
+            <div class="pillar-icon">⏳</div>
+            <h3>Lista de Espera Automática</h3>
+            <p>Artículos con stock = 0 o búsquedas sin catálogo se registran fielmente en <code>product_waitlist</code> para programar confección en taller.</p>
+        </div>
+        <div class="pillar-card p-success">
+            <div class="pillar-icon">🔒</div>
+            <h3>Regla de los 3 Datos de Pago</h3>
+            <p>En comprobantes borrosos o pago manual, exige obligatoriamente: <strong>Banco Emisor</strong>, <strong>Referencia (4-12 dígitos)</strong> y <strong>Fecha de Pago</strong>.</p>
+        </div>
+        <div class="pillar-card p-purple">
+            <div class="pillar-icon">🛡️</div>
+            <h3>Blindaje contra Bucles y Reinicios</h3>
+            <p>Fotos sueltas sin pedido no generan bucles infinitos. En pleno proceso de pago, escribir "0" advierte antes de anular (exige CANCELAR formal).</p>
+        </div>
+    </section>
+
+    <!-- TABS -->
+    <div class="tabs-container">
+        <button class="tab-btn active" onclick="switchView('diagram')">
+            <i class="fa-solid fa-project-diagram"></i> Diagrama de Flujo (Mermaid)
+        </button>
+        <button class="tab-btn" onclick="switchView('steps')">
+            <i class="fa-solid fa-list-check"></i> Simulador de Estados Paso a Paso
+        </button>
+        <button class="tab-btn" onclick="switchView('rules')">
+            <i class="fa-solid fa-scale-balanced"></i> Matriz de Reglas de Negocio
+        </button>
+    </div>
+
+    <!-- MAIN VIEW CONTAINER -->
+    <main class="section-wrapper">
+
+        <!-- 1. MERMAID DIAGRAM VIEW -->
+        <div id="view-diagram" class="diagram-box fade-in">
+            <div class="diagram-toolbar">
+                <button class="tool-btn" onclick="resetZoom()" title="Restablecer vista"><i class="fa-solid fa-arrows-rotate"></i> Centrar</button>
+            </div>
+            <div class="mermaid" id="mermaid-graph">
+flowchart TD
+    %% Estilos de Nodos
+    classDef startNode fill:#1e3a8a,stroke:#3b82f6,stroke-width:2px,color:#fff;
+    classDef decisionNode fill:#312e81,stroke:#818cf8,stroke-width:2px,color:#fff;
+    classDef processNode fill:#1e293b,stroke:#475569,stroke-width:2px,color:#fff;
+    classDef waitlistNode fill:#78350f,stroke:#f59e0b,stroke-width:2px,color:#fff;
+    classDef paymentNode fill:#064e3b,stroke:#10b981,stroke-width:2px,color:#fff;
+    classDef alertNode fill:#7f1d1d,stroke:#ef4444,stroke-width:2px,color:#fff;
+    classDef finishNode fill:#134e4a,stroke:#14b8a6,stroke-width:2px,color:#fff;
+
+    START([📱 Mensaje de Entrada en WhatsApp]):::startNode --> CHECK_REG{¿Cliente Registrado en BD?}:::decisionNode
+
+    %% REGISTRO
+    CHECK_REG -- No --> REG_NAME[1. Solicitar Nombre y Apellido]:::processNode
+    REG_NAME --> REG_CI[2. Solicitar Cédula de Identidad]:::processNode
+    REG_CI --> REG_PHONE[3. Solicitar Teléfono Venezolano]:::processNode
+    REG_PHONE --> UPSERT_CLIENT[Guardar en BD y Activar Sesión]:::processNode
+    UPSERT_CLIENT --> SHOW_CATALOG
+
+    %% CATÁLOGO & SOLICITUD
+    CHECK_REG -- Sí --> CHECK_INTENT{Intención o Mensaje}:::decisionNode
+    CHECK_INTENT -- Saludo o 0 --> SHOW_CATALOG[Desplegar Catálogo Stock > 0 + Tasa BCV Oficial]:::processNode
+    CHECK_INTENT -- Queja / Asesor --> ADVISOR[Derivar a Asesor Humano con Enlace Directo]:::alertNode
+    CHECK_INTENT -- Selección / Multilínea --> EVAL_ORDER[Analizar Productos, Tallas y Cantidades]:::processNode
+
+    SHOW_CATALOG --> CHOOSE_PROD[Seleccionar Producto o Ficha Técnica]:::processNode
+    CHOOSE_PROD --> EVAL_ORDER
+
+    %% STOCK & LISTA DE ESPERA
+    EVAL_ORDER --> CHECK_STOCK{¿Disponibilidad de Inventario?}:::decisionNode
+    
+    CHECK_STOCK -- Stock = 0 o Inexistente --> WAITLIST_PROMPT[Ofrecer Lista de Espera Automática]:::waitlistNode
+    WAITLIST_PROMPT --> USER_WL_DEC{¿Desea Aviso?}:::decisionNode
+    USER_WL_DEC -- 1 (Sí) --> SAVE_WL[Registrar en Tabla product_waitlist para Taller]:::waitlistNode
+    USER_WL_DEC -- 2 (No) --> SHOW_CATALOG
+
+    CHECK_STOCK -- Pide Más del Stock (ej: pide 50, hay 30) --> STOCK_LIMITED[CONFIRMING_LIMITED_STOCK<br>Ofrecer las 30 disponibles o elegir otra]:::waitlistNode
+    STOCK_LIMITED --> USER_STK_DEC{Respuesta Cliente}:::decisionNode
+    USER_STK_DEC -- 1 (Acepta disponibles) --> ADD_CART[Agregar al Carrito con Cantidad Capped]:::processNode
+    USER_STK_DEC -- 2 (Otra cantidad) --> PROMPT_QTY[Indicar Nueva Cantidad]:::processNode
+    PROMPT_QTY --> EVAL_ORDER
+    USER_STK_DEC -- 3 (Cancelar) --> SHOW_CATALOG
+
+    CHECK_STOCK -- Stock Suficiente --> CHECK_SIZE{¿Prenda requiere Talla?}:::decisionNode
+    CHECK_SIZE -- Sí --> SELECT_SIZE[Seleccionar Talla con Botones]:::processNode
+    SELECT_SIZE --> SELECT_QTY[Indicar Cantidad Numérica]:::processNode
+    CHECK_SIZE -- No --> SELECT_QTY
+    SELECT_QTY --> ADD_CART
+
+    %% CARRITO DE COMPRAS
+    ADD_CART --> CART_VIEW[CART_VIEW: Mostrar Resumen Dual $ y Bs BCV]:::processNode
+    CART_VIEW --> CART_ACTION{¿Siguiente Acción?}:::decisionNode
+    CART_ACTION -- 1 (Agregar más) --> SHOW_CATALOG
+    CART_ACTION -- 3 (Vaciar) --> CLEAR_CART[Vaciar Selección]:::processNode --> SHOW_CATALOG
+    CART_ACTION -- 2 (Pagar) --> AWAITING_PAYMENT[AWAITING_PAYMENT: Instrucciones Limpias Pago Móvil / Transf]:::paymentNode
+
+    %% PROCESO DE PAGO & VALIDACIÓN
+    AWAITING_PAYMENT --> USER_PAYMENT_INPUT{Cliente Consigna Pago}:::decisionNode
+    USER_PAYMENT_INPUT -- Comando 0 --> WARN_CANCEL[Advertir Pedido en Curso.<br>Exigir CANCELAR formal]:::alertNode
+    USER_PAYMENT_INPUT -- Sube Foto / Captura --> OCR_PROC[OCR Análisis Venezolano + Purga Inmediata de Disco]:::processNode
+    USER_PAYMENT_INPUT -- Escribe Datos de Pago --> MANUAL_PAY_PARSE[Parsear Banco, Referencia y Fecha]:::processNode
+
+    OCR_PROC --> VERIFY_PAY_FIELDS{¿Tiene los 3 Datos Obligatorios?<br>1. Banco Emisor<br>2. Referencia 4-12 dig.<br>3. Fecha de Pago}:::decisionNode
+    MANUAL_PAY_PARSE --> VERIFY_PAY_FIELDS
+
+    VERIFY_PAY_FIELDS -- Falta Algún Dato --> CONFIRM_PAY_DATA[CONFIRMING_PAYMENT_DATA<br>Mostrar capturados y solicitar el faltante]:::alertNode
+    CONFIRM_PAY_DATA --> USER_SUPPLIES_MISSING[Cliente aporta dato faltante]:::processNode --> VERIFY_PAY_FIELDS
+
+    VERIFY_PAY_FIELDS -- Los 3 Datos Presentes --> ATTACH_BCV[Vincular Tasa BCV Oficial de la Fecha del Recibo]:::paymentNode
+    ATTACH_BCV --> AWAITING_SCHEDULE[AWAITING_SCHEDULE: Agendar Cita de Retiro en Sede Tiuna]:::finishNode
+
+    %% AGENDAMIENTO & CIERRE
+    AWAITING_SCHEDULE --> SELECT_DAY[1. Elegir Día: Hoy / Mañana / Pasado]:::finishNode
+    SELECT_DAY --> SELECT_TIME[2. Elegir Hora de Retiro: 9am - 3:30pm]:::finishNode
+    SELECT_TIME --> FINALIZE_ORDER[Guardar Pedido en BD con Ticket CIT-XXXXXX]:::finishNode
+
+    FINALIZE_ORDER --> GEN_PDF[Generar Comprobante PDF WeasyPrint con QR Digital]:::finishNode
+    GEN_PDF --> WA_DISPATCH[Despachar PDF a WhatsApp y Notificar Administración]:::finishNode
+    WA_DISPATCH --> COMPLETED([🏁 Pedido Confirmado y Agendado]):::startNode
+
+    %% IMÁGENES SUELTAS
+    USER_PAYMENT_INPUT -- Foto suelta sin carrito activo --> SAFE_NO_ORDER[Responder cortésmente que no hay deuda pendiente.<br>Evitar bucles infinitos]:::processNode
+            </div>
+        </div>
+
+        <!-- 2. SIMULATOR / STEP BY STEP VIEW -->
+        <div id="view-steps" class="steps-container fade-in" style="display: none;">
+
+            <!-- Paso 1 -->
+            <div class="step-card">
+                <div class="step-header">
+                    <span class="step-badge badge-blue">ESTADO 1</span>
+                    <span class="step-number">01</span>
+                </div>
+                <h4>Registro Inicial Obligatorio</h4>
+                <p class="step-desc">Se activa en el primer mensaje de cualquier cliente no registrado. Bloquea el catálogo hasta capturar la identidad formal.</p>
+                <div class="step-box">
+                    <div class="box-title"><i class="fa-regular fa-comment"></i> Entrada del Usuario</div>
+                    <div class="box-content">"Hola", ".", o cualquier consulta inicial</div>
+                </div>
+                <div class="step-box box-green">
+                    <div class="box-title"><i class="fa-solid fa-robot"></i> Respuesta del Bot</div>
+                    <div class="box-content">"👋 ¡Hola! Bienvenido a SIS-COMER. ¿Me indicas tu Nombre y Apellido completo?"</div>
+                </div>
+                <div class="step-box box-orange">
+                    <div class="box-title"><i class="fa-solid fa-shield-halved"></i> Protección Aplicada</div>
+                    <div class="box-content">Filtro de nombres reales (rechaza risas, "aguacate", etc.). Solicita Nombre → Cédula → Teléfono.</div>
+                </div>
+            </div>
+
+            <!-- Paso 2 -->
+            <div class="step-card">
+                <div class="step-header">
+                    <span class="step-badge badge-blue">ESTADO 2</span>
+                    <span class="step-number">02</span>
+                </div>
+                <h4>Catálogo Dinámico & Tasa BCV</h4>
+                <p class="step-desc">Muestra productos con stock disponible (&gt; 0) con conversión automática y simultánea en Dólares ($ Ref) y Bolívares (Bs).</p>
+                <div class="step-box">
+                    <div class="box-title"><i class="fa-regular fa-comment"></i> Entrada del Usuario</div>
+                    <div class="box-content">"0", "catalogo", o tras completar el registro</div>
+                </div>
+                <div class="step-box box-green">
+                    <div class="box-title"><i class="fa-solid fa-robot"></i> Respuesta del Bot</div>
+                    <div class="box-content">Menú con lista numerada [1], [2]..., montos duales, opción de lista de espera y asesor.</div>
+                </div>
+                <div class="step-box box-orange">
+                    <div class="box-title"><i class="fa-solid fa-shield-halved"></i> Protección Aplicada</div>
+                    <div class="box-content">Productos en 0 stock no aparecen en el catálogo activo para evitar falsas expectativas.</div>
+                </div>
+            </div>
+
+            <!-- Paso 3 -->
+            <div class="step-card">
+                <div class="step-header">
+                    <span class="step-badge badge-orange">ESTADO 3</span>
+                    <span class="step-number">03</span>
+                </div>
+                <h4>Control de Stock & Cantidad</h4>
+                <p class="step-desc">Si el usuario pide más unidades de las existentes, el bot frena la sobreventa y ofrece las unidades exactas en almacén.</p>
+                <div class="step-box">
+                    <div class="box-title"><i class="fa-regular fa-comment"></i> Entrada del Usuario</div>
+                    <div class="box-content">"50" (cuando el stock disponible es 30)</div>
+                </div>
+                <div class="step-box box-orange">
+                    <div class="box-title"><i class="fa-solid fa-robot"></i> Respuesta del Bot</div>
+                    <div class="box-content">"⚠️ Disponemos únicamente de 30 unidades en existencia.
+[ 1️⃣ ] Llevar las 30 disponibles
+[ 2️⃣ ] Elegir otra cantidad
+[ 3️⃣ ] Volver al catálogo"</div>
+                </div>
+                <div class="step-box box-green">
+                    <div class="box-title"><i class="fa-solid fa-shield-halved"></i> Protección Aplicada</div>
+                    <div class="box-content">Cero sobreventas. Se limita en memoria y en base de datos.</div>
+                </div>
+            </div>
+
+            <!-- Paso 4 -->
+            <div class="step-card">
+                <div class="step-header">
+                    <span class="step-badge badge-orange">ESTADO 3.1</span>
+                    <span class="step-number">04</span>
+                </div>
+                <h4>Lista de Espera (Agotados)</h4>
+                <p class="step-desc">Si solicita un artículo agotado o fuera de catálogo, lo anota en la lista de espera conectada a administración y taller.</p>
+                <div class="step-box">
+                    <div class="box-title"><i class="fa-regular fa-comment"></i> Entrada del Usuario</div>
+                    <div class="box-content">"Uniforme Tiuna" (artículo con stock = 0)</div>
+                </div>
+                <div class="step-box box-green">
+                    <div class="box-title"><i class="fa-solid fa-robot"></i> Respuesta del Bot</div>
+                    <div class="box-content">"⚠️ El artículo se encuentra actualmente AGOTADO. ¿Desea anotarse en la lista de espera para avisarle al ingresar stock?"</div>
+                </div>
+                <div class="step-box box-orange">
+                    <div class="box-title"><i class="fa-solid fa-shield-halved"></i> Protección Aplicada</div>
+                    <div class="box-content">Al responder 1, se registra en tabla <code>product_waitlist</code> con nombre, teléfono y producto exacto.</div>
+                </div>
+            </div>
+
+            <!-- Paso 5 -->
+            <div class="step-card">
+                <div class="step-header">
+                    <span class="step-badge badge-green">ESTADO 4</span>
+                    <span class="step-number">05</span>
+                </div>
+                <h4>Vista de Carrito Multilínea</h4>
+                <p class="step-desc">Permite compras compuestas ("Hola, deseo 20 Tiuna talla MR, 5 XL y 10 parches") en un solo paso.</p>
+                <div class="step-box">
+                    <div class="box-title"><i class="fa-regular fa-comment"></i> Entrada del Usuario</div>
+                    <div class="box-content">"Hola deseo 2 gorras tacticas"</div>
+                </div>
+                <div class="step-box box-green">
+                    <div class="box-title"><i class="fa-solid fa-robot"></i> Respuesta del Bot</div>
+                    <div class="box-content">"✅ Usted ha elegido:
+• 2x GORRA TÁCTICA
+[ 1️⃣ ] Agregar otro
+[ 2️⃣ ] Proceder al Pago previo
+[ 3️⃣ ] Vaciar selección"</div>
+                </div>
+                <div class="step-box box-orange">
+                    <div class="box-title"><i class="fa-solid fa-shield-halved"></i> Protección Aplicada</div>
+                    <div class="box-content">El "Hola" no anula la compra multilínea; NLU extrae productos, tallas y cantidades simultáneamente.</div>
+                </div>
+            </div>
+
+            <!-- Paso 6 -->
+            <div class="step-card">
+                <div class="step-header">
+                    <span class="step-badge badge-purple">ESTADO 5</span>
+                    <span class="step-number">06</span>
+                </div>
+                <h4>Instrucciones Limpias de Pago</h4>
+                <p class="step-desc">Despacha 4 mensajes ordenados con los datos de Pago Móvil y Transferencia bancaria configurados en el sistema.</p>
+                <div class="step-box">
+                    <div class="box-title"><i class="fa-regular fa-comment"></i> Entrada del Usuario</div>
+                    <div class="box-content">"2" o "pagar"</div>
+                </div>
+                <div class="step-box box-green">
+                    <div class="box-title"><i class="fa-solid fa-robot"></i> Mensajes Despachados</div>
+                    <div class="box-content">1. Resumen y Monto en $ y Bs
+2. Bloque copiable Pago Móvil
+3. Bloque copiable Transferencia
+4. Solicitud de comprobante de pago</div>
+                </div>
+                <div class="step-box box-orange">
+                    <div class="box-title"><i class="fa-solid fa-shield-halved"></i> Protección Aplicada</div>
+                    <div class="box-content">Escribir '0' en este estado NO cancela el pedido de golpe; exige la palabra "CANCELAR".</div>
+                </div>
+            </div>
+
+            <!-- Paso 7 -->
+            <div class="step-card">
+                <div class="step-header">
+                    <span class="step-badge badge-purple">ESTADO 5.1</span>
+                    <span class="step-number">07</span>
+                </div>
+                <h4>Regla de los 3 Datos de Pago</h4>
+                <p class="step-desc">Exige que todo pago cuente con Banco Emisor, Referencia (4-12 dígitos) y Fecha de Pago para atar la tasa BCV oficial.</p>
+                <div class="step-box">
+                    <div class="box-title"><i class="fa-regular fa-comment"></i> Entrada del Usuario</div>
+                    <div class="box-content">"Ref 12345678" (sin banco ni fecha)</div>
+                </div>
+                <div class="step-box box-red">
+                    <div class="box-title"><i class="fa-solid fa-robot"></i> Respuesta del Bot</div>
+                    <div class="box-content">"⚠️ VERIFICACIÓN DE COMPROBANTE
+• 🏦 Banco: ❌ Pendiente
+• 🔢 Referencia: `12345678`
+• 📅 Fecha: ❌ Pendiente
+👉 Por favor facilítenos el Banco Emisor y la Fecha de Pago."</div>
+                </div>
+                <div class="step-box box-green">
+                    <div class="box-title"><i class="fa-solid fa-shield-halved"></i> Protección Aplicada</div>
+                    <div class="box-content">No deja pasar pagos ciegos. Atrapa la tasa oficial del día en que el cliente pagó.</div>
+                </div>
+            </div>
+
+            <!-- Paso 8 -->
+            <div class="step-card">
+                <div class="step-header">
+                    <span class="step-badge badge-green">ESTADO 6</span>
+                    <span class="step-number">08</span>
+                </div>
+                <h4>Agendamiento de Retiro</h4>
+                <p class="step-desc">Tras validar el pago, permite al cliente elegir día y franja horaria para retirar en la sede de Fuerte Tiuna.</p>
+                <div class="step-box">
+                    <div class="box-title"><i class="fa-regular fa-comment"></i> Entrada del Usuario</div>
+                    <div class="box-content">"1" (Hoy) y luego "4" (02:00 PM)</div>
+                </div>
+                <div class="step-box box-green">
+                    <div class="box-title"><i class="fa-solid fa-robot"></i> Respuesta del Bot</div>
+                    <div class="box-content">"📋 SOLICITUD Y PAGO REGISTRADOS
+🎫 TICKET OFICIAL: `CIT-261007-001`
+📅 Cita de Retiro: 07/10/2026 02:00 PM
+📍 Lugar: Piso 1 — Sede de Comercialización"</div>
+                </div>
+                <div class="step-box box-orange">
+                    <div class="box-title"><i class="fa-solid fa-shield-halved"></i> Protección Aplicada</div>
+                    <div class="box-content">Solo habilita agendamiento post-pago confirmado.</div>
+                </div>
+            </div>
+
+            <!-- Paso 9 -->
+            <div class="step-card">
+                <div class="step-header">
+                    <span class="step-badge badge-green">CIERRE</span>
+                    <span class="step-number">09</span>
+                </div>
+                <h4>Factura PDF Oficial con QR</h4>
+                <p class="step-desc">Generación con WeasyPrint en el servidor y despacho digital directo como documento PDF adjunto en WhatsApp.</p>
+                <div class="step-box">
+                    <div class="box-title"><i class="fa-solid fa-file-pdf"></i> Archivo Generado</div>
+                    <div class="box-content">Orden_Compra_CIT-261007-001.pdf</div>
+                </div>
+                <div class="step-box box-green">
+                    <div class="box-title"><i class="fa-solid fa-qrcode"></i> Contenido del Documento</div>
+                    <div class="box-content">• Membrete Complejo Industrial Tiuna
+• RIF G-20011500-2 y dirección fiscal
+• Código QR con enlace de validación digital
+• Desglose con IVA y tasa BCV</div>
+                </div>
+                <div class="step-box box-orange">
+                    <div class="box-title"><i class="fa-solid fa-shield-halved"></i> Protección Aplicada</div>
+                    <div class="box-content">Eliminación física del archivo temporal tras enviarlo para evitar llenado de almacenamiento.</div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- 3. BUSINESS RULES MATRIX VIEW -->
+        <div id="view-rules" class="fade-in" style="display: none;">
+            <table class="rules-table">
+                <thead>
+                    <tr>
+                        <th style="width: 25%;">Escenario / Regla</th>
+                        <th style="width: 35%;">Comportamiento Blindado del Bot</th>
+                        <th style="width: 40%;">Impacto Operativo & Blindaje</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td class="rule-title"><i class="fa-solid fa-boxes-stacked" style="color: #06b6d4;"></i> Petición con Stock Excedido</td>
+                        <td>Pasa a estado <code>CONFIRMING_LIMITED_STOCK</code>, informando el número exacto disponible y ofreciendo llevar esas o elegir otra cantidad.</td>
+                        <td><strong>Cero sobreventas:</strong> Administración nunca se verá en la penosa situación de cobrar por prendas inexistentes.</td>
+                    </tr>
+                    <tr>
+                        <td class="rule-title"><i class="fa-solid fa-clock-rotate-left" style="color: #f59e0b;"></i> Producto Agotado (Stock = 0)</td>
+                        <td>Pasa a <code>WAITLIST_CONFIRM</code> y registra al cliente en <code>product_waitlist</code> con ID, nombre y teléfono.</td>
+                        <td><strong>Inteligencia de demanda:</strong> El taller sabe exactamente qué confeccionar primero según la lista de espera.</td>
+                    </tr>
+                    <tr>
+                        <td class="rule-title"><i class="fa-solid fa-receipt" style="color: #10b981;"></i> Comprobante Borroso o Manual</td>
+                        <td>Exige obligatoriamente los 3 campos: <strong>Banco</strong>, <strong>Referencia (4-12 dig.)</strong> y <strong>Fecha</strong>. Si falta alguno, solicita específicamente el faltante.</td>
+                        <td><strong>Conciliación exacta:</strong> Ningún pago se pasa con referencia en blanco o sin atar la tasa BCV del día pagado.</td>
+                    </tr>
+                    <tr>
+                        <td class="rule-title"><i class="fa-solid fa-image" style="color: #ef4444;"></i> Foto o Captura sin Carrito Activo</td>
+                        <td>Destruye el archivo temporal de disco y responde educadamente que no tiene deuda pendiente, ofreciendo el catálogo o asesor.</td>
+                        <td><strong>Cero bucles infinitos:</strong> Evita que un cliente que envía un meme, sticker o captura quede atrapado en el bot pidiéndole banco.</td>
+                    </tr>
+                    <tr>
+                        <td class="rule-title"><i class="fa-solid fa-face-laugh-beam" style="color: #8b5cf6;"></i> Risas o Saludos en Pleno Flujo</td>
+                        <td>Detecta "jajaja", "hahaha", "hola" dentro de estados activos y responde amablemente recordando la selección en curso sin reiniciar.</td>
+                        <td><strong>Continuidad del cliente:</strong> No borra el carrito ni manda al usuario al catálogo cuando simplemente sonríe o saluda.</td>
+                    </tr>
+                    <tr>
+                        <td class="rule-title"><i class="fa-solid fa-ban" style="color: #ef4444;"></i> Comando "0" en Proceso de Pago</td>
+                        <td>Bloquea el reinicio accidental. Informa que tiene un pedido activo y solicita escribir <code>CANCELAR</code> para confirmar la anulación.</td>
+                        <td><strong>Protección de pedidos:</strong> Si el cliente escribe "0" por error de dedo o referencia, su pedido no se borra.</td>
+                    </tr>
+                    <tr>
+                        <td class="rule-title"><i class="fa-solid fa-file-invoice-dollar" style="color: #10b981;"></i> Confirmación de Pago</td>
+                        <td>Genera Comprobante PDF oficial WeasyPrint con QR y lo envía directo a WhatsApp.</td>
+                        <td><strong>Formalidad militar:</strong> El cliente tiene su soporte listo para ingresar al Fuerte Tiuna.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+    </main>
+
+    <!-- FOOTER -->
+    <footer>
+        <p><strong>SIS-COMER</strong> · Sistema Automatizado de Comercialización Textil Militar</p>
+        <p>Complejo Industrial Tiuna (CIT) · RIF G-20011500-2 · Fuerte Tiuna, Caracas, Venezuela</p>
+    </footer>
+
+    <!-- SCRIPT DE INTERACTIVIDAD -->
+    <script>
+        // Inicializar Mermaid
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'dark',
+            securityLevel: 'loose',
+            flowchart: {
+                useMaxWidth: true,
+                htmlLabels: true,
+                curve: 'basis'
+            }
+        });
+
+        function switchView(viewName) {
+            // Ocultar todas las vistas
+            document.getElementById('view-diagram').style.display = 'none';
+            document.getElementById('view-steps').style.display = 'none';
+            document.getElementById('view-rules').style.display = 'none';
+
+            // Quitar clase activa a todos los botones
+            const buttons = document.querySelectorAll('.tab-btn');
+            buttons.forEach(b => b.classList.remove('active'));
+
+            // Mostrar vista seleccionada
+            if (viewName === 'diagram') {
+                document.getElementById('view-diagram').style.display = 'block';
+                buttons[0].classList.add('active');
+            } else if (viewName === 'steps') {
+                document.getElementById('view-steps').style.display = 'grid';
+                buttons[1].classList.add('active');
+            } else if (viewName === 'rules') {
+                document.getElementById('view-rules').style.display = 'block';
+                buttons[2].classList.add('active');
+            }
+        }
+
+        function resetZoom() {
+            const container = document.getElementById('view-diagram');
+            container.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
+        }
+    </script>
+</body>
+</html>
