@@ -18,14 +18,35 @@ from app.time_utils import (
 
 logger = logging.getLogger(__name__)
 DB_FILE = DATA_DIR / "commercial_bot.db"
+_initializing_db = False
 
 def get_connection():
+    global _initializing_db
+    DATA_DIR.mkdir(exist_ok=True)
+    db_existed = DB_FILE.exists()
     conn = sqlite3.connect(str(DB_FILE))
     conn.row_factory = sqlite3.Row
+    if not db_existed and not _initializing_db:
+        _initializing_db = True
+        try:
+            init_db(conn=conn)
+        finally:
+            _initializing_db = False
     return conn
 
-def init_db():
-    conn = get_connection()
+def init_db(conn=None):
+    """
+    Inicializa de forma automática y segura la base de datos si no existe.
+    Usa 'CREATE TABLE IF NOT EXISTS' y migraciones protegidas, por lo que
+    NUNCA sobreescribe ni borra los datos existentes al actualizar el código.
+    """
+    should_close = False
+    if conn is None:
+        DATA_DIR.mkdir(exist_ok=True)
+        conn = sqlite3.connect(str(DB_FILE))
+        conn.row_factory = sqlite3.Row
+        should_close = True
+
     cursor = conn.cursor()
 
     # 1. Tabla: products (Productos con auditoría)
@@ -181,52 +202,9 @@ def init_db():
 
     conn.commit()
 
-    # NOTA: Sistema 100% virgen: No se precargan productos iniciales automáticos.
-    # El usuario administrará el catálogo desde el panel administrativo.
-
-    # Configuraciones de Sistema por defecto
-    default_config = {
-        "bot_name": "SIS-COMER - Equipo de Comercialización",
-        "maintenance_mode": "0",  # 0 = Activo normal, 1 = Modo mantenimiento activado
-        "maintenance_message": "¡Hola! En este momento nos encontramos en proceso de mantenimiento. Por favor comunícate con nosotros el día de mañana de 8:00 AM a 5:00 PM.",
-        "business_hours_start": "08:00",
-        "business_hours_end": "17:00",
-        "off_hours_message": "Hola. En este momento nos encontramos fuera de nuestro horario laboral (Lunes a Viernes de 8:00 AM a 5:00 PM). Sin embargo, tu solicitud quedará guardada en el sistema para ser atendida a primera hora hábil.",
-        "advisor_phone": "+584121234567",
-        "advisor_name": "ASESOR COMERCIAL - COMPLEJO INDUSTRIAL TIUNA",
-        "pickup_address": "SEDE PRINCIPAL - COMPLEJO INDUSTRIAL TIUNA",
-        "pickup_hours": "LUNES A VIERNES DE 8:00 AM A 5:00 PM",
-        # Configuración de Métodos de Pago
-        "pagomovil_bank": "BANCO DE VENEZUELA (0102)",
-        "pagomovil_phone": "0412-1234567",
-        "pagomovil_id": "J-408123456",
-        "transfer_bank": "BANCO DE VENEZUELA",
-        "transfer_account": "0102-0501-80-0000123456",
-        "transfer_holder": "COMPLEJO INDUSTRIAL TIUNA",
-        "payment_methods_active": "PAGO MÓVIL, TRANSFERENCIA BANCARIA"
-    }
-    for k, v in default_config.items():
-        cursor.execute("INSERT OR IGNORE INTO system_config (key, value) VALUES (?, ?)", (k, v))
-        
-    # Sanitizar textos viejos que puedan haber quedado guardados
-    cursor.execute("""
-        UPDATE system_config 
-        SET value = 'SEDE PRINCIPAL - COMPLEJO INDUSTRIAL TIUNA' 
-        WHERE key = 'pickup_address' AND (value LIKE '%INTENDENCIA MILITAR%' OR value LIKE '%COMERCIALIZACIÓN E INTENDENCIA%')
-    """)
-    cursor.execute("""
-        UPDATE system_config 
-        SET value = 'ASESOR COMERCIAL - COMPLEJO INDUSTRIAL TIUNA' 
-        WHERE key = 'advisor_name' AND value LIKE '%MILITAR%'
-    """)
-    cursor.execute("""
-        UPDATE system_config 
-        SET value = 'SIS-COMER - Equipo de Comercialización' 
-        WHERE key = 'bot_name' AND value LIKE '%TEXTIL MILITAR%'
-    """)
     conn.commit()
-
-    conn.close()
+    if should_close:
+        conn.close()
 
 # ----------------- PRODUCT CRUD -----------------
 def get_products(only_active=True) -> List[Dict[str, Any]]:
@@ -682,13 +660,36 @@ def mark_reminder_sent(order_id: int):
     conn.close()
 
 # ----------------- SYSTEM CONFIG -----------------
+DEFAULT_SYSTEM_CONFIG = {
+    "bot_name": "SIS-COMER - Equipo de Comercialización",
+    "maintenance_mode": "0",
+    "maintenance_message": "¡Hola! En este momento nos encontramos en proceso de mantenimiento. Por favor comunícate con nosotros el día de mañana de 8:00 AM a 5:00 PM.",
+    "business_hours_start": "08:00",
+    "business_hours_end": "17:00",
+    "off_hours_message": "Hola. En este momento nos encontramos fuera de nuestro horario laboral (Lunes a Viernes de 8:00 AM a 5:00 PM). Sin embargo, tu solicitud quedará guardada en el sistema para ser atendida a primera hora hábil.",
+    "advisor_phone": "+584121234567",
+    "advisor_name": "ASESOR COMERCIAL - COMPLEJO INDUSTRIAL TIUNA",
+    "pickup_address": "SEDE PRINCIPAL - COMPLEJO INDUSTRIAL TIUNA",
+    "pickup_hours": "LUNES A VIERNES DE 8:00 AM A 5:00 PM",
+    "pagomovil_bank": "BANCO DE VENEZUELA (0102)",
+    "pagomovil_phone": "0412-1234567",
+    "pagomovil_id": "J-408123456",
+    "transfer_bank": "BANCO DE VENEZUELA",
+    "transfer_account": "0102-0501-80-0000123456",
+    "transfer_holder": "COMPLEJO INDUSTRIAL TIUNA",
+    "payment_methods_active": "PAGO MÓVIL, TRANSFERENCIA BANCARIA"
+}
+
 def get_all_config() -> Dict[str, str]:
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT key, value FROM system_config")
     rows = cursor.fetchall()
     conn.close()
-    return {r["key"]: r["value"] for r in rows}
+    merged = dict(DEFAULT_SYSTEM_CONFIG)
+    for r in rows:
+        merged[r["key"]] = r["value"]
+    return merged
 
 def update_config(config_dict: Dict[str, str]):
     conn = get_connection()
@@ -1075,6 +1076,211 @@ def reset_database_to_virgin():
     conn.commit()
     conn.close()
     logger.info("Base de datos de SIS-COMER reseteada a estado VIRGEN (sin registros previos)")
+
+# ----------------- REPORTE DIARIO DE VENTAS & DESGLOSE DE UNIFORMES -----------------
+def get_daily_sales_report(target_date: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Genera el informe oficial de cierre de ventas del día:
+    - Métricas financieras consolidadas ($ REF y Bolívares) a tasa BCV
+    - Desglose detallado de uniformes y prendas vendidas por modelo, tipo y talla
+    - Detalle pormenorizado de cada pedido realizado
+    - Texto formateado para compartir por WhatsApp
+    """
+    date_str = str(target_date).strip() if target_date else now_vet_date_str()
+    # Si viene en formato DD/MM/AAAA, convertir a YYYY-MM-DD
+    if len(date_str) == 10 and date_str[2] == "/" and date_str[5] == "/":
+        parts = date_str.split("/")
+        date_str = f"{parts[2]}-{parts[1]}-{parts[0]}"
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # Consultar pedidos de la fecha excluyendo cancelados y anulados
+    cursor.execute("""
+        SELECT * FROM orders
+        WHERE (date(created_at) = ? OR created_at LIKE ? || '%')
+          AND UPPER(status) NOT IN ('CANCELADA', 'CANCELADO', 'ANULADA', 'ANULADO')
+        ORDER BY id ASC
+    """, (date_str, date_str))
+    orders_rows = [dict(r) for r in cursor.fetchall()]
+
+    from app.bcv_service import bcv_service
+    bcv_rate = bcv_service.get_rate_for_date(date_str)
+
+    total_orders = len(orders_rows)
+    total_usd = sum(float(r.get("amount_usd") or 0.0) for r in orders_rows)
+    total_ves = sum(float(r.get("amount_ves") or 0.0) for r in orders_rows)
+
+    payment_methods_summary = {}
+    products_breakdown = {}
+    itemized_table = []
+    detailed_orders = []
+    total_garments_sold = 0
+
+    for ord_dict in orders_rows:
+        pm = str(ord_dict.get("payment_method") or "PAGO MÓVIL").strip().upper()
+        pm_clean = "PAGO MÓVIL" if "MÓVIL" in pm or "MOVIL" in pm else ("TRANSFERENCIA" if "TRANS" in pm else ("EFECTIVO" if "EFECT" in pm or "DIVISA" in pm else pm))
+        payment_methods_summary[pm_clean] = payment_methods_summary.get(pm_clean, 0.0) + float(ord_dict.get("amount_usd") or 0.0)
+
+        items_raw = ord_dict.get("items_detail")
+        items_list = []
+        if isinstance(items_raw, str):
+            try:
+                items_list = json.loads(items_raw)
+            except Exception:
+                items_list = []
+        elif isinstance(items_raw, list):
+            items_list = items_raw
+
+        order_rate = float(ord_dict.get("bcv_rate_applied") or bcv_rate)
+
+        parsed_items = []
+        for it in items_list:
+            name = str(it.get("name", "ARTÍCULO")).strip()
+            size = str(it.get("size") or "").strip()
+            qty = int(it.get("qty", 1))
+            unit_price = float(it.get("unit_price") or it.get("price") or 0.0)
+            subtotal_usd = float(it.get("subtotal") or (unit_price * qty))
+            subtotal_ves = subtotal_usd * order_rate
+
+            total_garments_sold += qty
+
+            parsed_items.append({
+                "name": name,
+                "size": size if size else "Estándar",
+                "qty": qty,
+                "unit_price": unit_price,
+                "subtotal_usd": subtotal_usd,
+                "subtotal_ves": subtotal_ves
+            })
+
+            # Fila desglosada por artículo
+            itemized_table.append({
+                "ticket_code": ord_dict.get("ticket_code"),
+                "client_name": ord_dict.get("client_name"),
+                "cedula": ord_dict.get("cedula"),
+                "product_name": name,
+                "size": size if size else "N/A",
+                "qty": qty,
+                "unit_price": unit_price,
+                "subtotal_usd": subtotal_usd,
+                "subtotal_ves": subtotal_ves,
+                "receipt_bank": ord_dict.get("receipt_bank") or "N/A",
+                "receipt_ref": ord_dict.get("receipt_ref") or "N/A"
+            })
+
+            # Agrupar por producto y modelo
+            if name not in products_breakdown:
+                # Determinar categoría
+                category = "UNIFORME" if any(w in name.upper() for w in ["CHAQUETA", "PATRIOTA", "CAMISA", "PANTALÓN", "PANTALON"]) else ("CALZADO" if "BOTA" in name.upper() else "ACCESORIO")
+                products_breakdown[name] = {
+                    "name": name,
+                    "category": category,
+                    "total_qty": 0,
+                    "total_usd": 0.0,
+                    "total_ves": 0.0,
+                    "sizes": {}
+                }
+            products_breakdown[name]["total_qty"] += qty
+            products_breakdown[name]["total_usd"] += subtotal_usd
+            products_breakdown[name]["total_ves"] += subtotal_ves
+
+            size_label = size if size else "Talla Única"
+            products_breakdown[name]["sizes"][size_label] = products_breakdown[name]["sizes"].get(size_label, 0) + qty
+
+        created_time = ""
+        if ord_dict.get("created_at") and " " in str(ord_dict["created_at"]):
+            created_time = str(ord_dict["created_at"]).split(" ")[1][:5]
+
+        detailed_orders.append({
+            "id": ord_dict.get("id"),
+            "ticket_code": ord_dict.get("ticket_code"),
+            "client_name": ord_dict.get("client_name"),
+            "cedula": ord_dict.get("cedula"),
+            "phone": ord_dict.get("phone"),
+            "created_time": created_time,
+            "pickup_date": format_date_dmy(ord_dict.get("pickup_date")),
+            "pickup_time": ord_dict.get("pickup_time"),
+            "status": ord_dict.get("status"),
+            "payment_method": ord_dict.get("payment_method"),
+            "receipt_bank": ord_dict.get("receipt_bank") or "N/A",
+            "receipt_ref": ord_dict.get("receipt_ref") or "N/A",
+            "amount_usd": round(float(ord_dict.get("amount_usd") or 0.0), 2),
+            "amount_ves": round(float(ord_dict.get("amount_ves") or 0.0), 2),
+            "items_summary": ord_dict.get("items_summary"),
+            "items": parsed_items
+        })
+
+    conn.close()
+
+    # Formatear desglose de uniformes
+    uniforms_summary_list = []
+    for prod_name, p_data in sorted(products_breakdown.items(), key=lambda x: x[1]["total_qty"], reverse=True):
+        sizes_text_list = [f"{sz}: {cnt} uds" for sz, cnt in sorted(p_data["sizes"].items())]
+        uniforms_summary_list.append({
+            "name": prod_name,
+            "category": p_data["category"],
+            "total_qty": p_data["total_qty"],
+            "total_usd": round(p_data["total_usd"], 2),
+            "total_ves": round(p_data["total_ves"], 2),
+            "sizes_detail": sizes_text_list,
+            "sizes_breakdown": p_data["sizes"]
+        })
+
+    dmy_date = format_date_dmy(date_str)
+    
+    # Texto oficial optimizado para copiar a WhatsApp
+    wa_lines = [
+        "📋 *REPORTE DIARIO DE VENTAS & CIERRE DE CAJA*",
+        "🏭 *Complejo Industrial Tiuna — SIS-COMER*",
+        f"📅 *Fecha:* {dmy_date} | ⏰ *Cierre Oficial:* {now_vet_time_str()}",
+        f"📊 *Tasa Oficial BCV:* Bs. {bcv_rate:,.2f} / $\n",
+        "────────────────────────",
+        "💰 *RESUMEN FINANCIERO:*",
+        f"• *Total Facturado ($):* ${total_usd:,.2f} REF",
+        f"• *Total Facturado (Bs):* Bs. {total_ves:,.2f}",
+        f"• *Pedidos Concretados:* {total_orders}",
+        f"• *Prendas / Uniformes Despachados:* {total_garments_sold} unidades\n",
+        "────────────────────────",
+        "🎽 *DESGLOSE DE UNIFORMES Y ARTÍCULOS VENDIDOS:*"
+    ]
+
+    if not uniforms_summary_list:
+        wa_lines.append("• Sin ventas registradas en esta fecha.")
+    else:
+        for u in uniforms_summary_list:
+            wa_lines.append(f"• *{u['total_qty']}x {u['name']}* — ${u['total_usd']:,.2f} Ref *(Bs. {u['total_ves']:,.2f})*")
+            if u["sizes_detail"]:
+                wa_lines.append(f"   ↳ Tallas: {', '.join(u['sizes_detail'])}")
+
+    wa_lines.append("\n────────────────────────")
+    wa_lines.append("🧾 *DETALLE DE PEDIDOS Y TRANSACCIONES:*")
+    if not detailed_orders:
+        wa_lines.append("• No hay órdenes registradas.")
+    else:
+        for idx, o in enumerate(detailed_orders, 1):
+            wa_lines.append(
+                f"{idx}. *[{o['ticket_code']}]* {o['client_name']} ({o['cedula']}) — ${o['amount_usd']:.2f} REF "
+                f"({o['receipt_bank']} | Ref: `{o['receipt_ref']}`)\n"
+                f"   📦 {o['items_summary']}"
+            )
+
+    wa_lines.append("\n_Reporte generado automáticamente por SIS-COMER (Equipo de Comercialización)._")
+
+    return {
+        "date": date_str,
+        "date_dmy": dmy_date,
+        "bcv_rate": round(bcv_rate, 4),
+        "total_orders": total_orders,
+        "total_usd": round(total_usd, 2),
+        "total_ves": round(total_ves, 2),
+        "total_garments_sold": total_garments_sold,
+        "payment_methods_summary": {k: round(v, 2) for k, v in payment_methods_summary.items()},
+        "uniforms_summary": uniforms_summary_list,
+        "itemized_table": itemized_table,
+        "detailed_orders": detailed_orders,
+        "whatsapp_text": "\n".join(wa_lines)
+    }
 
 
 

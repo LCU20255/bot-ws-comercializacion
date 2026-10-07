@@ -1014,3 +1014,564 @@ select {
   color: #0f172a;
 }
 
+/* =========================================================
+   ESTILOS PREMIUM: CIERRE DE CAJA & REPORTE DIARIO DE VENTAS
+   ========================================================= */
+
+.report-header-banner {
+  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+  border-radius: 16px;
+  padding: 24px 28px;
+  color: #ffffff;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 20px;
+  margin-bottom: 24px;
+  box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.report-title-area {
+  max-width: 580px;
+}
+
+.report-badge-tiuna {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(22, 101, 52, 0.45);
+  border: 1px solid #22c55e;
+  color: #86efac;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+
+.report-title-area h2 {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: #ffffff;
+  margin: 0 0 6px 0;
+  letter-spacing: -0.5px;
+}
+
+.report-title-area p {
+  color: #94a3b8;
+  font-size: 0.88rem;
+  margin: 0;
+  line-height: 1.4;
+}
+
+.report-controls-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.date-picker-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.date-picker-group label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #cbd5e1;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.date-input-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #ffffff;
+  padding: 4px 8px;
+  border-radius: 8px;
+}
+
+.date-input-wrapper input[type="date"] {
+  border: none;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #0f172a;
+  outline: none;
+  cursor: pointer;
+}
+
+.report-action-buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-whatsapp {
+  background: #16a34a !important;
+  color: #ffffff !important;
+  border: none !important;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(22, 163, 74, 0.3);
+  transition: all 0.2s ease;
+}
+
+.btn-whatsapp:hover {
+  background: #15803d !important;
+  transform: translateY(-1px);
+}
+
+/* KPI Cards Highlight */
+.report-kpi-grid .kpi-card {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.report-kpi-grid .kpi-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 10px 20px -3px rgba(0, 0, 0, 0.08);
+}
+
+.report-kpi-grid .highlight-green {
+  border-bottom: 3px solid #16a34a;
+}
+
+.report-kpi-grid .highlight-blue {
+  border-bottom: 3px solid #0284c7;
+}
+
+.report-kpi-grid .highlight-gold {
+  border-bottom: 3px solid #d97706;
+}
+
+/* Meta Card & Payment Chips */
+.report-meta-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 14px 20px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.02);
+}
+
+.meta-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #0f172a;
+}
+
+.meta-item i {
+  font-size: 1.4rem;
+  color: #166534;
+}
+
+.meta-item span {
+  font-size: 0.78rem;
+  color: #64748b;
+  display: block;
+}
+
+.meta-item strong {
+  font-size: 1.05rem;
+  color: #0f172a;
+}
+
+.meta-item-separator {
+  width: 1px;
+  height: 34px;
+  background: #cbd5e1;
+}
+
+.meta-payments-area {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+.meta-payments-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #334155;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.payment-chips-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.payment-chip {
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 5px 12px;
+  font-size: 0.82rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #1e293b;
+}
+
+.payment-chip i {
+  color: #166534;
+}
+
+.payment-chip strong {
+  color: #0f172a;
+}
+
+/* Sections & Tables */
+.report-section-card {
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+}
+
+.report-section-header {
+  background: #ffffff;
+  padding: 18px 24px;
+  border-bottom: 1px solid #e2e8f0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.report-section-header .header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.section-icon-badge {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+}
+
+.section-icon-badge.uniform-badge {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.section-icon-badge.order-badge {
+  background: #e0f2fe;
+  color: #0369a1;
+}
+
+.report-section-header h3 {
+  font-size: 1.12rem;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0;
+}
+
+.counter-badge {
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid #cbd5e1;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 4px 12px;
+  border-radius: 20px;
+}
+
+.report-table thead th {
+  background: #0f172a;
+  color: #f8fafc;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  padding: 12px 14px;
+  border: none;
+}
+
+.report-table tbody td {
+  padding: 12px 14px;
+  font-size: 0.88rem;
+  vertical-align: middle;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.report-table tbody tr:hover {
+  background: #f8fafc;
+}
+
+/* Category Badges */
+.badge-category {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+.badge-category.cat-uniform {
+  background: #dcfce7;
+  color: #166534;
+  border: 1px solid #bbf7d0;
+}
+
+.badge-category.cat-calzado {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fde68a;
+}
+
+.badge-category.cat-accesorio {
+  background: #e0e7ff;
+  color: #3730a3;
+  border: 1px solid #c7d2fe;
+}
+
+.sizes-pill-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.size-pill {
+  display: inline-block;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  color: #334155;
+  padding: 2px 7px;
+  border-radius: 5px;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.qty-badge {
+  display: inline-block;
+  background: #0f172a;
+  color: #ffffff;
+  padding: 3px 9px;
+  border-radius: 12px;
+  font-weight: 700;
+  font-size: 0.82rem;
+}
+
+/* Specific Items Rows in Orders Table */
+.order-items-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.item-detail-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: #1e293b;
+  line-height: 1.3;
+}
+
+.item-qty-tag {
+  background: #e2e8f0;
+  color: #0f172a;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-weight: 700;
+  font-size: 0.75rem;
+}
+
+.item-size-tag {
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.item-subtotal-tag {
+  color: #166534;
+  font-weight: 600;
+  font-size: 0.75rem;
+}
+
+.ticket-tag {
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  font-weight: 700;
+  color: #1d4ed8;
+  background: #eff6ff;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid #bfdbfe;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.82rem;
+  transition: background 0.15s ease;
+}
+
+.ticket-tag:hover {
+  background: #dbeafe;
+}
+
+.cedula-sub {
+  font-size: 0.76rem;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.phone-link {
+  color: #16a34a;
+  font-weight: 600;
+  text-decoration: none;
+  font-size: 0.82rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.phone-link:hover {
+  text-decoration: underline;
+}
+
+.time-tag {
+  font-size: 0.8rem;
+  color: #475569;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.payment-info-box {
+  font-size: 0.82rem;
+  color: #0f172a;
+}
+
+.ref-tag {
+  font-size: 0.75rem;
+  color: #64748b;
+  font-family: monospace;
+  margin-top: 2px;
+}
+
+/* WhatsApp Card & Preview */
+.report-whatsapp-card {
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+}
+
+.report-whatsapp-header {
+  background: #f8fafc;
+  padding: 16px 20px;
+  border-bottom: 1px solid #e2e8f0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.report-whatsapp-header .header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.whatsapp-preview-box {
+  background: #0f172a;
+  color: #86efac;
+  font-family: 'JetBrains Mono', Consolas, 'Courier New', monospace;
+  font-size: 0.84rem;
+  line-height: 1.6;
+  padding: 20px 24px;
+  border-radius: 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 380px;
+  overflow-y: auto;
+  border: 1px solid #334155;
+  box-shadow: inset 0 2px 6px rgba(0,0,0,0.4);
+}
+
+/* PRINT MEDIA STYLES: Guardar en PDF o Imprimir */
+@media print {
+  .sidebar,
+  .topbar,
+  .report-controls-toolbar,
+  .btn-whatsapp,
+  .report-whatsapp-card,
+  .maint-banner,
+  .kpi-icon {
+    display: none !important;
+  }
+
+  body, .app-layout, .main-content {
+    background: #ffffff !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+  }
+
+  .tab-view {
+    display: none !important;
+  }
+
+  #tab-report {
+    display: block !important;
+  }
+
+  .report-header-banner {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    border: 2px solid #0f172a !important;
+    box-shadow: none !important;
+    padding: 15px !important;
+  }
+
+  .report-header-banner h2 {
+    color: #0f172a !important;
+  }
+
+  .report-header-banner p {
+    color: #475569 !important;
+  }
+
+  .report-badge-tiuna {
+    background: #e2e8f0 !important;
+    color: #0f172a !important;
+    border-color: #0f172a !important;
+  }
+
+  .report-table thead th {
+    background: #1e293b !important;
+    color: #ffffff !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .report-section-card {
+    box-shadow: none !important;
+    border: 1px solid #cbd5e1 !important;
+    page-break-inside: avoid;
+  }
+}
+
+

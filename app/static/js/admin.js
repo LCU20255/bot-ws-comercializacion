@@ -133,6 +133,7 @@ function initTabs() {
 
       const titleMap = {
         orders: "Pedidos & Agendamientos de Retiro",
+        report: "Cierre de Caja & Reporte Diario de Ventas",
         inventory: "Control de Inventario & Kardex",
         metrics: "Análisis Comercial & Rendimiento de Ventas",
         products: "Catálogo de Suministros & Textiles Militares",
@@ -141,6 +142,7 @@ function initTabs() {
       };
       const subMap = {
         orders: "Control de solicitudes militares, pagos previos OCR y entrega presencial.",
+        report: "Consolidado oficial de ventas, desglose de uniformes por modelo/talla y detalle específico de operaciones.",
         inventory: "Auditoría y control de movimientos de inventario en SIS-COMER.",
         metrics: "Facturación consolidada en Divisas ($) y Bolívares (Bs) a tasa BCV oficial.",
         products: "Gestiona los artículos de intendencia, precios, tallas, fotos y stock en tiempo real.",
@@ -153,7 +155,9 @@ function initTabs() {
       if (subEl) subEl.innerText = subMap[target] || "";
 
       // Lazy loads específicos de cada tab
-      if (target === "inventory") {
+      if (target === "report") {
+        loadDailyReport();
+      } else if (target === "inventory") {
         loadInventoryKardex();
         loadLowStockAlerts();
         loadWaitlist();
@@ -1259,3 +1263,313 @@ async function saveConfig(e) {
 function exportData(format) {
   window.open(`/api/export/${format}`, '_blank');
 }
+
+// ----------------- CIERRE DE CAJA & REPORTE DIARIO -----------------
+let currentDailyReportData = null;
+
+function switchToReportTab() {
+  const reportTabBtn = document.querySelector('.nav-item[data-tab="report"]');
+  if (reportTabBtn) {
+    reportTabBtn.click();
+  }
+}
+
+function getTodayISODate() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function setReportToday() {
+  const dateInput = document.getElementById("report-date-input");
+  if (dateInput) {
+    dateInput.value = getTodayISODate();
+    loadDailyReport(dateInput.value);
+  }
+}
+
+function onReportDateChange() {
+  const dateInput = document.getElementById("report-date-input");
+  if (dateInput && dateInput.value) {
+    loadDailyReport(dateInput.value);
+  }
+}
+
+async function loadDailyReport(targetDate = null) {
+  const dateInput = document.getElementById("report-date-input");
+  if (!targetDate) {
+    if (dateInput && dateInput.value) {
+      targetDate = dateInput.value;
+    } else {
+      targetDate = getTodayISODate();
+      if (dateInput) dateInput.value = targetDate;
+    }
+  } else if (dateInput && !dateInput.value) {
+    dateInput.value = targetDate;
+  }
+
+  try {
+    const res = await fetch(`/api/reports/daily?date=${targetDate}`);
+    if (!res.ok) {
+      throw new Error(`Error en servidor: ${res.status}`);
+    }
+    const data = await res.json();
+    currentDailyReportData = data;
+    renderDailyReport(data);
+  } catch (err) {
+    console.error("Error al cargar reporte diario:", err);
+    notifyError("Error cargando reporte diario", err.message);
+  }
+}
+
+function renderDailyReport(rep) {
+  if (!rep) return;
+
+  // Formateador numérico en español venezolano
+  const fmtUsd = (num) => `$${parseFloat(num || 0).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} REF`;
+  const fmtVes = (num) => `Bs. ${parseFloat(num || 0).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  // 1. KPIs Principales
+  const kpiUsd = document.getElementById("rep-kpi-usd");
+  const kpiVes = document.getElementById("rep-kpi-ves");
+  const kpiOrders = document.getElementById("rep-kpi-orders");
+  const kpiGarments = document.getElementById("rep-kpi-garments");
+  const metaBcv = document.getElementById("rep-meta-bcv");
+
+  if (kpiUsd) kpiUsd.innerText = fmtUsd(rep.total_usd);
+  if (kpiVes) kpiVes.innerText = fmtVes(rep.total_ves);
+  if (kpiOrders) kpiOrders.innerText = `${rep.total_orders || 0} pedidos`;
+  if (kpiGarments) kpiGarments.innerText = `${rep.total_garments_sold || 0} uds`;
+  if (metaBcv) metaBcv.innerText = `Bs. ${parseFloat(rep.bcv_rate || 0).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} / $`;
+
+  // 2. Chips de Formas de Pago
+  const payContainer = document.getElementById("rep-meta-payments");
+  if (payContainer) {
+    const pms = rep.payment_methods_summary || {};
+    const pmEntries = Object.entries(pms);
+    if (pmEntries.length === 0) {
+      payContainer.innerHTML = '<span class="payment-chip text-muted">Sin cobros en la fecha seleccionada</span>';
+    } else {
+      payContainer.innerHTML = pmEntries.map(([method, amount]) => {
+        const vesAmt = amount * (rep.bcv_rate || 1);
+        let icon = "bi-cash-coin";
+        if (method.includes("PAGO MÓVIL") || method.includes("MOVIL")) icon = "bi-phone";
+        else if (method.includes("TRANS")) icon = "bi-bank";
+        else if (method.includes("EFECT") || method.includes("DIVISA")) icon = "bi-cash-stack";
+        else if (method.includes("PUNTO")) icon = "bi-credit-card";
+
+        return `
+          <div class="payment-chip">
+            <i class="bi ${icon}"></i>
+            <strong>${method}:</strong>
+            <span>${fmtUsd(amount)} <small>(${fmtVes(vesAmt)})</small></span>
+          </div>
+        `;
+      }).join("");
+    }
+  }
+
+  // 3. SECCIÓN 1: Desglose de Uniformes y Prendas
+  const uniformsTbody = document.getElementById("rep-uniforms-tbody");
+  const uniformsTfoot = document.getElementById("rep-uniforms-tfoot");
+  const uniformsBadge = document.getElementById("rep-uniforms-count-badge");
+  const uniforms = rep.uniforms_summary || [];
+
+  if (uniformsBadge) uniformsBadge.innerText = `${uniforms.length} productos`;
+
+  if (uniformsTbody) {
+    if (uniforms.length === 0) {
+      uniformsTbody.innerHTML = `
+        <tr>
+          <td colspan="6" class="text-center text-muted" style="padding: 35px;">
+            <i class="bi bi-inbox" style="font-size: 2rem; display: block; margin-bottom: 8px; color: #94a3b8;"></i>
+            No se registraron ventas de uniformes o artículos para el día ${rep.date_dmy || rep.date}.
+          </td>
+        </tr>
+      `;
+      if (uniformsTfoot) uniformsTfoot.style.display = "none";
+    } else {
+      uniformsTbody.innerHTML = uniforms.map(u => {
+        let catBadgeClass = "badge-category cat-uniform";
+        if (u.category === "CALZADO") catBadgeClass = "badge-category cat-calzado";
+        else if (u.category === "ACCESORIO") catBadgeClass = "badge-category cat-accesorio";
+
+        // Desglose de tallas
+        const sizesHtml = (u.sizes_detail && u.sizes_detail.length > 0)
+          ? u.sizes_detail.map(sz => `<span class="size-pill">${sz}</span>`).join(" ")
+          : '<span class="size-pill">Talla Estándar</span>';
+
+        return `
+          <tr>
+            <td>
+              <strong style="color: #0f172a; font-size: 0.95rem;">${u.name}</strong>
+            </td>
+            <td>
+              <span class="${catBadgeClass}">${u.category}</span>
+            </td>
+            <td>
+              <div class="sizes-pill-list">${sizesHtml}</div>
+            </td>
+            <td style="text-align: center;">
+              <span class="qty-badge">${u.total_qty}</span>
+            </td>
+            <td style="text-align: right; font-weight: 700; color: #166534;">
+              ${fmtUsd(u.total_usd)}
+            </td>
+            <td style="text-align: right; font-weight: 700; color: #0369a1;">
+              ${fmtVes(u.total_ves)}
+            </td>
+          </tr>
+        `;
+      }).join("");
+
+      if (uniformsTfoot) {
+        uniformsTfoot.style.display = "table-footer-group";
+        const tfootQty = document.getElementById("rep-tfoot-total-qty");
+        const tfootUsd = document.getElementById("rep-tfoot-total-usd");
+        const tfootVes = document.getElementById("rep-tfoot-total-ves");
+        if (tfootQty) tfootQty.innerText = `${rep.total_garments_sold} uds`;
+        if (tfootUsd) tfootUsd.innerText = fmtUsd(rep.total_usd);
+        if (tfootVes) tfootVes.innerText = fmtVes(rep.total_ves);
+      }
+    }
+  }
+
+  // 4. SECCIÓN 2: Registro Detallado de Transacciones ("todo así especificadito")
+  const ordersTbody = document.getElementById("rep-orders-tbody");
+  const ordersBadge = document.getElementById("rep-orders-count-badge");
+  const detailedOrders = rep.detailed_orders || [];
+
+  if (ordersBadge) ordersBadge.innerText = `${detailedOrders.length} pedidos`;
+
+  if (ordersTbody) {
+    if (detailedOrders.length === 0) {
+      ordersTbody.innerHTML = `
+        <tr>
+          <td colspan="8" class="text-center text-muted" style="padding: 35px;">
+            <i class="bi bi-receipt" style="font-size: 2rem; display: block; margin-bottom: 8px; color: #94a3b8;"></i>
+            No hay órdenes registradas para la fecha seleccionada.
+          </td>
+        </tr>
+      `;
+    } else {
+      ordersTbody.innerHTML = detailedOrders.map(o => {
+        // Items desglosados en viñetas limpias
+        let itemsHtml = "";
+        if (o.items && o.items.length > 0) {
+          itemsHtml = o.items.map(it => `
+            <div class="item-detail-row">
+              <span class="item-qty-tag">${it.qty}x</span>
+              <strong>${it.name}</strong>
+              <span class="item-size-tag">(${it.size})</span>
+              <span class="item-subtotal-tag">@ ${fmtUsd(it.unit_price)}</span>
+            </div>
+          `).join("");
+        } else {
+          itemsHtml = `<span>${o.items_summary || "Artículos no especificados"}</span>`;
+        }
+
+        const timeStr = o.created_time ? `<span class="time-tag"><i class="bi bi-clock"></i> ${o.created_time}</span>` : '-';
+        const bankInfo = (o.receipt_bank && o.receipt_bank !== 'N/A') ? o.receipt_bank : (o.payment_method || 'EFECTIVO');
+        const refInfo = (o.receipt_ref && o.receipt_ref !== 'N/A') ? `<div class="ref-tag">Ref: ${o.receipt_ref}</div>` : '';
+
+        return `
+          <tr>
+            <td>
+              <span class="ticket-tag" onclick="copyText('${o.ticket_code}')" title="Clic para copiar ticket">
+                ${o.ticket_code} <i class="bi bi-copy"></i>
+              </span>
+            </td>
+            <td>${timeStr}</td>
+            <td>
+              <strong>${o.client_name}</strong>
+              <div class="cedula-sub"><i class="bi bi-person-vcard"></i> ${o.cedula}</div>
+            </td>
+            <td>
+              <a href="https://wa.me/${o.phone.replace(/[^0-9]/g, '')}" target="_blank" class="phone-link">
+                <i class="bi bi-whatsapp"></i> ${o.phone}
+              </a>
+            </td>
+            <td>
+              <div class="order-items-breakdown">${itemsHtml}</div>
+            </td>
+            <td>
+              <div class="payment-info-box">
+                <strong>${bankInfo}</strong>
+                ${refInfo}
+              </div>
+            </td>
+            <td style="text-align: right; font-weight: 700; color: #166534;">
+              ${fmtUsd(o.amount_usd)}
+            </td>
+            <td style="text-align: right; font-weight: 700; color: #0369a1;">
+              ${fmtVes(o.amount_ves)}
+            </td>
+          </tr>
+        `;
+      }).join("");
+    }
+  }
+
+  // 5. SECCIÓN 3: Formato WhatsApp
+  const waPreview = document.getElementById("rep-whatsapp-preview");
+  if (waPreview) {
+    waPreview.innerText = rep.whatsapp_text || "Sin texto generado";
+  }
+}
+
+async function copyDailyReportWhatsApp() {
+  if (!currentDailyReportData || !currentDailyReportData.whatsapp_text) {
+    notifyError("Sin datos", "No hay un reporte cargado actualmente para copiar.");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(currentDailyReportData.whatsapp_text);
+    notifySuccess("¡Copiado con Éxito!", "El resumen de cierre diario de SIS-COMER se ha copiado al portapapeles. Puede pegarlo directamente en WhatsApp.");
+  } catch (err) {
+    // Respaldo manual
+    const waEl = document.getElementById("rep-whatsapp-preview");
+    if (waEl) {
+      const range = document.createRange();
+      range.selectNodeContents(waEl);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      try {
+        document.execCommand('copy');
+        notifySuccess("¡Copiado!", "Texto copiado al portapapeles.");
+      } catch (e2) {
+        notifyError("Error al copiar", "Por favor seleccione el texto manualmente y cópielo.");
+      }
+    }
+  }
+}
+
+function exportDailyExcel() {
+  const dateInput = document.getElementById("report-date-input");
+  const targetDate = (dateInput && dateInput.value) ? dateInput.value : getTodayISODate();
+  window.open(`/api/export/daily-report-excel?date=${targetDate}`, '_blank');
+}
+
+function printDailyReport() {
+  window.print();
+}
+
+function copyText(str) {
+  if (!str) return;
+  navigator.clipboard.writeText(str).then(() => {
+    if (window.Swal) {
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: `Copiado: ${str}`,
+        showConfirmButton: false,
+        timer: 1800
+      });
+    }
+  });
+}
+

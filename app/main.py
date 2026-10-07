@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
+import xlsxwriter
 
 from app.config import (
     BASE_DIR, DATA_DIR, PORT, HOST,
@@ -23,7 +24,8 @@ from app.database import (
     get_inventory_movements, add_stock_batch, get_low_stock_products,
     get_available_catalog_products, get_financial_and_sales_metrics,
     get_waitlist, mark_waitlist_notified, update_waitlist_item,
-    delete_waitlist_item, convert_waitlist_to_order, reset_database_to_virgin
+    delete_waitlist_item, convert_waitlist_to_order, reset_database_to_virgin,
+    get_daily_sales_report
 )
 from app.time_utils import now_vet, now_vet_str, now_vet_date_str
 from app.bot_flow import bot_manager, reset_session
@@ -439,6 +441,118 @@ def api_export_csv():
     headers = {'Content-Disposition': f'attachment; filename="{filename}"'}
     return StreamingResponse(io.BytesIO(output.getvalue().encode('utf-8-sig')), media_type='text/csv', headers=headers)
 
+# ----------------- REST API: REPORTE DIARIO DE VENTAS & DESGLOSE DE UNIFORMES -----------------
+@app.get("/api/reports/daily")
+def api_get_daily_report(date: Optional[str] = None):
+    return get_daily_sales_report(date)
+
+@app.get("/api/export/daily-report-excel")
+def api_export_daily_report_excel(date: Optional[str] = None):
+    report = get_daily_sales_report(date)
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        workbook = writer.book
+
+        title_fmt = workbook.add_format({
+            'bold': True, 'font_size': 13, 'font_color': '#0F172A', 'align': 'left'
+        })
+        subtitle_fmt = workbook.add_format({
+            'font_size': 9, 'font_color': '#475569', 'italic': True
+        })
+        header_fmt = workbook.add_format({
+            'bold': True, 'fg_color': '#166534', 'font_color': '#FFFFFF',
+            'border': 1, 'align': 'center', 'valign': 'vcenter'
+        })
+        curr_fmt = workbook.add_format({'num_format': '$#,##0.00', 'align': 'right'})
+        ves_fmt = workbook.add_format({'num_format': 'Bs. #,##0.00', 'align': 'right'})
+        center_fmt = workbook.add_format({'align': 'center'})
+
+        # 1. RESUMEN DE CIERRE
+        ws_resumen = workbook.add_worksheet('Cierre Diario')
+        ws_resumen.write('A1', 'COMPLEJO INDUSTRIAL TIUNA — SIS-COMER', title_fmt)
+        ws_resumen.write('A2', f"REPORTE OFICIAL DE CIERRE DIARIO DE VENTAS — {report['date_dmy']}", subtitle_fmt)
+        ws_resumen.write('A3', f"Tasa Oficial BCV Aplicada: Bs. {report['bcv_rate']:,.2f} / $", subtitle_fmt)
+
+        kpis = [
+            ("TOTAL PEDIDOS CONCRETADOS", report['total_orders']),
+            ("TOTAL UNIDADES DESPACHADAS", report['total_garments_sold']),
+            ("TOTAL FACTURADO EN DIVISAS ($)", f"${report['total_usd']:,.2f} REF"),
+            ("TOTAL FACTURADO EN BOLÍVARES (BS)", f"Bs. {report['total_ves']:,.2f}")
+        ]
+        ws_resumen.write('A5', 'CONCEPTO', header_fmt)
+        ws_resumen.write('B5', 'VALOR CONSOLIDADO', header_fmt)
+        for r_idx, (k, v) in enumerate(kpis, start=6):
+            ws_resumen.write(f'A{r_idx}', k)
+            ws_resumen.write(f'B{r_idx}', str(v), center_fmt)
+
+        ws_resumen.write('A11', 'MÉTODO DE PAGO', header_fmt)
+        ws_resumen.write('B11', 'TOTAL DIVISAS ($)', header_fmt)
+        r_start = 12
+        for pm, val in report['payment_methods_summary'].items():
+            ws_resumen.write(f'A{r_start}', pm)
+            ws_resumen.write(f'B{r_start}', val, curr_fmt)
+            r_start += 1
+
+        ws_resumen.set_column('A:A', 36)
+        ws_resumen.set_column('B:B', 24)
+
+        # 2. DESGLOSE DE UNIFORMES Y MODELOS
+        ws_uniforms = workbook.add_worksheet('Desglose Uniformes')
+        u_headers = ["ARTÍCULO / MODELO", "CATEGORÍA", "TALLAS VENDIDAS", "CANT. TOTAL", "TOTAL ($ REF)", "TOTAL (BS)"]
+        for c_idx, h in enumerate(u_headers):
+            ws_uniforms.write(0, c_idx, h, header_fmt)
+
+        for u_idx, u in enumerate(report['uniforms_summary'], start=1):
+            ws_uniforms.write(u_idx, 0, u['name'])
+            ws_uniforms.write(u_idx, 1, u['category'], center_fmt)
+            ws_uniforms.write(u_idx, 2, ", ".join(u['sizes_detail']))
+            ws_uniforms.write(u_idx, 3, u['total_qty'], center_fmt)
+            ws_uniforms.write(u_idx, 4, u['total_usd'], curr_fmt)
+            ws_uniforms.write(u_idx, 5, u['total_ves'], ves_fmt)
+
+        ws_uniforms.set_column('A:A', 32)
+        ws_uniforms.set_column('B:B', 16)
+        ws_uniforms.set_column('C:C', 35)
+        ws_uniforms.set_column('D:D', 14)
+        ws_uniforms.set_column('E:E', 18)
+        ws_uniforms.set_column('F:F', 22)
+
+        # 3. DETALLE ESPECÍFICO DE PEDIDOS
+        ws_orders = workbook.add_worksheet('Detalle de Pedidos')
+        o_headers = ["NRO. TICKET", "CLIENTE", "CÉDULA", "TELÉFONO", "HORA", "RESUMEN PRODUCTOS", "MÉTODO PAGO", "BANCO", "REFERENCIA", "TOTAL ($)", "TOTAL (BS)"]
+        for c_idx, h in enumerate(o_headers):
+            ws_orders.write(0, c_idx, h, header_fmt)
+
+        for row_idx, o in enumerate(report['detailed_orders'], start=1):
+            ws_orders.write(row_idx, 0, o['ticket_code'], center_fmt)
+            ws_orders.write(row_idx, 1, o['client_name'])
+            ws_orders.write(row_idx, 2, o['cedula'], center_fmt)
+            ws_orders.write(row_idx, 3, o['phone'])
+            ws_orders.write(row_idx, 4, o['created_time'], center_fmt)
+            ws_orders.write(row_idx, 5, o['items_summary'])
+            ws_orders.write(row_idx, 6, o['payment_method'])
+            ws_orders.write(row_idx, 7, o['receipt_bank'])
+            ws_orders.write(row_idx, 8, o['receipt_ref'], center_fmt)
+            ws_orders.write(row_idx, 9, o['amount_usd'], curr_fmt)
+            ws_orders.write(row_idx, 10, o['amount_ves'], ves_fmt)
+
+        ws_orders.set_column('A:A', 16)
+        ws_orders.set_column('B:B', 24)
+        ws_orders.set_column('C:C', 14)
+        ws_orders.set_column('D:D', 16)
+        ws_orders.set_column('E:E', 10)
+        ws_orders.set_column('F:F', 40)
+        ws_orders.set_column('G:G', 18)
+        ws_orders.set_column('H:H', 18)
+        ws_orders.set_column('I:I', 16)
+        ws_orders.set_column('J:J', 14)
+        ws_orders.set_column('K:K', 18)
+
+    output.seek(0)
+    filename = f"cierre_ventas_{report['date']}.xlsx"
+    headers = {'Content-Disposition': f'attachment; filename="{filename}"'}
+    return StreamingResponse(output, media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', headers=headers)
+
 # ----------------- REST API: SIMULADOR & OCR COMPROBANTES -----------------
 @app.post("/api/chat/simulate")
 def api_simulate_chat(body: SimulateChatSchema):
@@ -723,3 +837,294 @@ def api_qr_code(text: str = Query(default="https://wa.me/584121234567")):
     img.save(img_byte_arr, format='PNG')
     img_byte_arr.seek(0)
     return StreamingResponse(img_byte_arr, media_type="image/png")
+
+# ----------------- REST API: CIERRE DIARIO & REPORTES -----------------
+def generate_daily_report_excel_bytes(report: dict) -> bytes:
+    output = io.BytesIO()
+    workbook = xlsxwriter.Workbook(output, {'in_memory': True})
+    
+    # Estilos ejecutivos Tiuna
+    header_fmt = workbook.add_format({
+        'bold': True,
+        'bg_color': '#166534',
+        'font_color': '#FFFFFF',
+        'border': 1,
+        'align': 'center',
+        'valign': 'vcenter',
+        'font_name': 'Segoe UI',
+        'font_size': 11
+    })
+    title_fmt = workbook.add_format({
+        'bold': True,
+        'font_size': 15,
+        'font_color': '#0F172A',
+        'font_name': 'Segoe UI'
+    })
+    subtitle_fmt = workbook.add_format({
+        'italic': True,
+        'font_size': 10,
+        'font_color': '#64748B',
+        'font_name': 'Segoe UI'
+    })
+    kpi_label_fmt = workbook.add_format({
+        'bold': True,
+        'font_color': '#334155',
+        'bg_color': '#F1F5F9',
+        'border': 1,
+        'font_name': 'Segoe UI',
+        'valign': 'vcenter'
+    })
+    kpi_val_usd_fmt = workbook.add_format({
+        'bold': True,
+        'font_color': '#166534',
+        'bg_color': '#FFFFFF',
+        'border': 1,
+        'num_format': '$#,##0.00 "REF"',
+        'font_name': 'Segoe UI',
+        'valign': 'vcenter'
+    })
+    kpi_val_ves_fmt = workbook.add_format({
+        'bold': True,
+        'font_color': '#0369A1',
+        'bg_color': '#FFFFFF',
+        'border': 1,
+        'num_format': '"Bs." #,##0.00',
+        'font_name': 'Segoe UI',
+        'valign': 'vcenter'
+    })
+    kpi_val_num_fmt = workbook.add_format({
+        'bold': True,
+        'font_color': '#0F172A',
+        'bg_color': '#FFFFFF',
+        'border': 1,
+        'num_format': '#,##0',
+        'align': 'center',
+        'font_name': 'Segoe UI',
+        'valign': 'vcenter'
+    })
+    data_fmt = workbook.add_format({
+        'font_name': 'Segoe UI',
+        'font_size': 10,
+        'border': 1,
+        'valign': 'vcenter'
+    })
+    data_center_fmt = workbook.add_format({
+        'font_name': 'Segoe UI',
+        'font_size': 10,
+        'border': 1,
+        'align': 'center',
+        'valign': 'vcenter'
+    })
+    usd_cell_fmt = workbook.add_format({
+        'font_name': 'Segoe UI',
+        'font_size': 10,
+        'border': 1,
+        'num_format': '$#,##0.00',
+        'valign': 'vcenter'
+    })
+    ves_cell_fmt = workbook.add_format({
+        'font_name': 'Segoe UI',
+        'font_size': 10,
+        'border': 1,
+        'num_format': '"Bs." #,##0.00',
+        'valign': 'vcenter'
+    })
+    total_row_fmt = workbook.add_format({
+        'bold': True,
+        'bg_color': '#E2E8F0',
+        'border': 1,
+        'font_name': 'Segoe UI',
+        'valign': 'vcenter'
+    })
+    total_row_usd_fmt = workbook.add_format({
+        'bold': True,
+        'bg_color': '#E2E8F0',
+        'border': 1,
+        'num_format': '$#,##0.00',
+        'font_name': 'Segoe UI',
+        'valign': 'vcenter'
+    })
+    total_row_ves_fmt = workbook.add_format({
+        'bold': True,
+        'bg_color': '#E2E8F0',
+        'border': 1,
+        'num_format': '"Bs." #,##0.00',
+        'font_name': 'Segoe UI',
+        'valign': 'vcenter'
+    })
+    
+    # PESTAÑA 1: Cierre Diario
+    ws1 = workbook.add_worksheet('Cierre Diario')
+    ws1.set_tab_color('#166534')
+    ws1.set_column('A:A', 34)
+    ws1.set_column('B:B', 26)
+    ws1.set_column('C:C', 26)
+
+    ws1.write('A1', 'COMPLEJO INDUSTRIAL TIUNA — SIS-COMER', title_fmt)
+    ws1.write('A2', f'CIERRE DE CAJA & REPORTE DIARIO DE VENTAS | Fecha: {report["date_dmy"]}', subtitle_fmt)
+
+    ws1.write('A4', 'INDICADOR COMERCIAL / KPI', header_fmt)
+    ws1.write('B4', 'VALOR DIVISAS / CANTIDAD', header_fmt)
+    ws1.write('C4', 'VALOR BOLÍVARES (BCV)', header_fmt)
+
+    ws1.write('A5', 'Total Facturado en Ventas', kpi_label_fmt)
+    ws1.write_number('B5', report.get('total_usd', 0.0), kpi_val_usd_fmt)
+    ws1.write_number('C5', report.get('total_ves', 0.0), kpi_val_ves_fmt)
+
+    ws1.write('A6', 'Total Solicitudes Concretadas', kpi_label_fmt)
+    ws1.write_number('B6', report.get('total_orders', 0), kpi_val_num_fmt)
+    ws1.write('C6', '-', data_center_fmt)
+
+    ws1.write('A7', 'Total Prendas y Uniformes Vendidos', kpi_label_fmt)
+    ws1.write_number('B7', report.get('total_garments_sold', 0), kpi_val_num_fmt)
+    ws1.write('C7', '-', data_center_fmt)
+
+    ws1.write('A8', 'Tasa Oficial BCV Aplicada', kpi_label_fmt)
+    ws1.write('B8', f"Bs. {report.get('bcv_rate', 0.0):,.2f} / $", data_center_fmt)
+    ws1.write('C8', '-', data_center_fmt)
+
+    ws1.write('A10', 'FORMA DE PAGO', header_fmt)
+    ws1.write('B10', 'TOTAL FACTURADO ($ REF)', header_fmt)
+    ws1.write('C10', 'TOTAL FACTURADO (BS)', header_fmt)
+
+    row = 10
+    pm_summary = report.get('payment_methods_summary', {})
+    bcv_val = float(report.get('bcv_rate', 1.0))
+    if not pm_summary:
+        ws1.write(row, 0, 'Sin operaciones registradas', data_fmt)
+        ws1.write_number(row, 1, 0, usd_cell_fmt)
+        ws1.write_number(row, 2, 0, ves_cell_fmt)
+        row += 1
+    else:
+        for pm, amt in pm_summary.items():
+            ws1.write(row, 0, pm, data_fmt)
+            ws1.write_number(row, 1, amt, usd_cell_fmt)
+            ws1.write_number(row, 2, amt * bcv_val, ves_cell_fmt)
+            row += 1
+
+    # PESTAÑA 2: Desglose de Uniformes y Artículos
+    ws2 = workbook.add_worksheet('Desglose Uniformes')
+    ws2.set_tab_color('#0284C7')
+    headers2 = ['Producto / Modelo', 'Categoría', 'Tallas Vendidas Desglosadas', 'Total Uds', 'Facturado ($ REF)', 'Facturado (Bs.)']
+    widths2 = [36, 16, 45, 14, 18, 20]
+    for col_idx, (h, w) in enumerate(zip(headers2, widths2)):
+        ws2.set_column(col_idx, col_idx, w)
+        ws2.write(0, col_idx, h, header_fmt)
+
+    r2 = 1
+    for u in report.get('uniforms_summary', []):
+        sizes_str = ', '.join(u.get('sizes_detail', [])) if u.get('sizes_detail') else 'Talla Única'
+        ws2.write(r2, 0, u.get('name', ''), data_fmt)
+        ws2.write(r2, 1, u.get('category', 'UNIFORME'), data_center_fmt)
+        ws2.write(r2, 2, sizes_str, data_fmt)
+        ws2.write_number(r2, 3, u.get('total_qty', 0), data_center_fmt)
+        ws2.write_number(r2, 4, u.get('total_usd', 0.0), usd_cell_fmt)
+        ws2.write_number(r2, 5, u.get('total_ves', 0.0), ves_cell_fmt)
+        r2 += 1
+
+    if r2 > 1:
+        ws2.write(r2, 0, 'TOTAL CONSOLIDADO', total_row_fmt)
+        ws2.write(r2, 1, '', total_row_fmt)
+        ws2.write(r2, 2, '', total_row_fmt)
+        ws2.write_number(r2, 3, report.get('total_garments_sold', 0), total_row_fmt)
+        ws2.write_number(r2, 4, report.get('total_usd', 0.0), total_row_usd_fmt)
+        ws2.write_number(r2, 5, report.get('total_ves', 0.0), total_row_ves_fmt)
+
+    # PESTAÑA 3: Detalle de Pedidos
+    ws3 = workbook.add_worksheet('Detalle de Pedidos')
+    ws3.set_tab_color('#D97706')
+    headers3 = ['Ticket', 'Hora', 'Cliente', 'Cédula', 'Teléfono', 'Artículos y Tallas', 'Banco', 'Nro Referencia', 'Monto ($ REF)', 'Monto (Bs.)', 'Estatus']
+    widths3 = [16, 10, 26, 14, 16, 45, 18, 18, 15, 18, 16]
+    for col_idx, (h, w) in enumerate(zip(headers3, widths3)):
+        ws3.set_column(col_idx, col_idx, w)
+        ws3.write(0, col_idx, h, header_fmt)
+
+    r3 = 1
+    for o in report.get('detailed_orders', []):
+        ws3.write(r3, 0, o.get('ticket_code', ''), data_center_fmt)
+        ws3.write(r3, 1, o.get('created_time') or '-', data_center_fmt)
+        ws3.write(r3, 2, o.get('client_name', ''), data_fmt)
+        ws3.write(r3, 3, o.get('cedula', ''), data_center_fmt)
+        ws3.write(r3, 4, o.get('phone', ''), data_center_fmt)
+        ws3.write(r3, 5, o.get('items_summary', ''), data_fmt)
+        ws3.write(r3, 6, o.get('receipt_bank') or 'N/A', data_center_fmt)
+        ws3.write(r3, 7, o.get('receipt_ref') or 'N/A', data_center_fmt)
+        ws3.write_number(r3, 8, float(o.get('amount_usd', 0.0)), usd_cell_fmt)
+        ws3.write_number(r3, 9, float(o.get('amount_ves', 0.0)), ves_cell_fmt)
+        ws3.write(r3, 10, o.get('status', ''), data_center_fmt)
+        r3 += 1
+
+    workbook.close()
+    output.seek(0)
+    return output.getvalue()
+
+
+@app.get("/api/reports/daily")
+def api_get_daily_report(date: Optional[str] = Query(default=None)):
+    """
+    Retorna el informe detallado de cierre diario de ventas,
+    desglose por modelo/talla y tabla específica de pedidos.
+    """
+    try:
+        report = get_daily_sales_report(date)
+        return report
+    except Exception as e:
+        logger.error(f"Error generando reporte diario de ventas: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/export/daily-report-excel")
+def api_export_daily_report_excel(date: Optional[str] = Query(default=None)):
+    """
+    Genera y descarga el archivo Excel multicapa oficial del Cierre Diario de SIS-COMER.
+    """
+    try:
+        report = get_daily_sales_report(date)
+        excel_bytes = generate_daily_report_excel_bytes(report)
+        filename = f"Cierre_Diario_SISCOMER_{report['date_dmy'].replace('/', '-')}.xlsx"
+        return Response(
+            content=excel_bytes,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except Exception as e:
+        logger.error(f"Error exportando Excel de cierre diario: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/export/excel")
+def api_export_orders_excel():
+    """Descarga general de pedidos en Excel"""
+    try:
+        df = export_orders_df()
+        out = io.BytesIO()
+        with pd.ExcelWriter(out, engine="xlsxwriter") as writer:
+            df.to_excel(writer, index=False, sheet_name="Pedidos")
+        out.seek(0)
+        filename = f"Pedidos_SISCOMER_{now_vet_date_str()}.xlsx"
+        return Response(
+            content=out.getvalue(),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except Exception as e:
+        logger.error(f"Error exportando pedidos a Excel: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/export/csv")
+def api_export_orders_csv():
+    """Descarga general de pedidos en CSV"""
+    try:
+        df = export_orders_df()
+        csv_data = df.to_csv(index=False, encoding="utf-8-sig")
+        filename = f"Pedidos_SISCOMER_{now_vet_date_str()}.csv"
+        return Response(
+            content=csv_data.encode("utf-8-sig"),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except Exception as e:
+        logger.error(f"Error exportando pedidos a CSV: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+

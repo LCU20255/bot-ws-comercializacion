@@ -33,6 +33,10 @@
           <span>Pedidos & Citas</span>
           <span class="badge" id="badge-orders-count">0</span>
         </button>
+        <button class="nav-item" data-tab="report">
+          <i class="bi bi-file-earmark-bar-graph"></i>
+          <span>Cierre & Reporte Diario</span>
+        </button>
         <button class="nav-item" data-tab="inventory">
           <i class="bi bi-stack"></i>
           <span>Inventario & Kardex</span>
@@ -84,6 +88,9 @@
         </div>
 
         <div class="topbar-actions">
+          <button class="btn btn-primary" onclick="switchToReportTab()" style="background: #166534; border-color: #166534;">
+            <i class="bi bi-file-earmark-bar-graph"></i> Cierre Diario
+          </button>
           <button class="btn btn-warning" id="btn-toggle-maint" onclick="toggleMaintenance()">
             <i class="bi bi-wrench-adjustable-circle"></i> <span id="maint-label">Mantenimiento: OFF</span>
           </button>
@@ -185,6 +192,194 @@
                   </tr>
                 </tbody>
               </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB: CIERRE & REPORTE DIARIO DE VENTAS -->
+        <section id="tab-report" class="tab-view">
+          <!-- Header & Toolbar -->
+          <div class="report-header-banner">
+            <div class="report-title-area">
+              <div class="report-badge-tiuna">
+                <i class="bi bi-shield-fill-check"></i> SIS-COMER OFICIAL
+              </div>
+              <h2>Cierre de Caja & Reporte Diario de Ventas</h2>
+              <p>Resumen consolidado, desglose exacto de uniformes por modelo/talla y detalle específico de operaciones.</p>
+            </div>
+            
+            <div class="report-controls-toolbar">
+              <div class="date-picker-group">
+                <label for="report-date-input"><i class="bi bi-calendar3"></i> Fecha de Cierre:</label>
+                <div class="date-input-wrapper">
+                  <input type="date" id="report-date-input" onchange="onReportDateChange()">
+                  <button type="button" class="btn btn-sm btn-outline-primary" onclick="setReportToday()">Hoy</button>
+                </div>
+              </div>
+
+              <div class="report-action-buttons">
+                <button type="button" class="btn btn-success" onclick="exportDailyExcel()" title="Descargar Libro Excel Oficial de 3 pestañas">
+                  <i class="bi bi-file-earmark-excel-fill"></i> Descargar Excel
+                </button>
+                <button type="button" class="btn btn-dark" onclick="printDailyReport()" title="Imprimir Reporte o Guardar en PDF">
+                  <i class="bi bi-printer-fill"></i> Imprimir / PDF
+                </button>
+                <button type="button" class="btn btn-whatsapp" onclick="copyDailyReportWhatsApp()" title="Copiar resumen estructurado para WhatsApp">
+                  <i class="bi bi-whatsapp"></i> Copiar WhatsApp
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- KPI Cards Grid -->
+          <div class="kpi-grid report-kpi-grid">
+            <div class="kpi-card highlight-green">
+              <div class="kpi-icon green"><i class="bi bi-currency-dollar"></i></div>
+              <div class="kpi-data">
+                <span class="kpi-label">Total Facturado ($ REF)</span>
+                <h3 id="rep-kpi-usd">$0.00 Ref</h3>
+                <small id="rep-kpi-usd-sub">Divisas recibidas o equivalentes</small>
+              </div>
+            </div>
+
+            <div class="kpi-card highlight-blue">
+              <div class="kpi-icon blue"><i class="bi bi-cash-coin"></i></div>
+              <div class="kpi-data">
+                <span class="kpi-label">Total en Bolívares (BCV)</span>
+                <h3 id="rep-kpi-ves">Bs. 0,00</h3>
+                <small id="rep-kpi-ves-sub">A tasa oficial BCV del día</small>
+              </div>
+            </div>
+
+            <div class="kpi-card">
+              <div class="kpi-icon purple"><i class="bi bi-receipt-cutoff"></i></div>
+              <div class="kpi-data">
+                <span class="kpi-label">Pedidos Concretados</span>
+                <h3 id="rep-kpi-orders">0</h3>
+                <small id="rep-kpi-orders-sub">Órdenes facturadas activas</small>
+              </div>
+            </div>
+
+            <div class="kpi-card highlight-gold">
+              <div class="kpi-icon yellow"><i class="bi bi-tags-fill"></i></div>
+              <div class="kpi-data">
+                <span class="kpi-label">Prendas / Uniformes</span>
+                <h3 id="rep-kpi-garments">0 uds</h3>
+                <small id="rep-kpi-garments-sub">Total de artículos entregados</small>
+              </div>
+            </div>
+          </div>
+
+          <!-- Secondary Summary: Tasa BCV & Métodos de Pago -->
+          <div class="report-meta-card">
+            <div class="meta-item">
+              <i class="bi bi-bank2"></i>
+              <div>
+                <span>Tasa Oficial BCV Aplicada:</span>
+                <strong id="rep-meta-bcv">Bs. 0,00 / $</strong>
+              </div>
+            </div>
+            <div class="meta-item-separator"></div>
+            <div class="meta-payments-area">
+              <span class="meta-payments-title"><i class="bi bi-wallet2"></i> Métodos de Pago Registrados:</span>
+              <div id="rep-meta-payments" class="payment-chips-container">
+                <span class="payment-chip">Cargando métodos...</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- SECCIÓN 1: Desglose de Uniformes y Prendas por Modelo y Talla -->
+          <div class="card table-card report-section-card">
+            <div class="card-header report-section-header">
+              <div class="header-left">
+                <div class="section-icon-badge uniform-badge"><i class="bi bi-person-badge-fill"></i></div>
+                <div>
+                  <h3>Desglose de Uniformes y Artículos Vendidos</h3>
+                  <small class="text-muted">Cantidad exacta clasificada por tipo, modelo y desglose específico de tallas vendidas.</small>
+                </div>
+              </div>
+              <span class="counter-badge" id="rep-uniforms-count-badge">0 modelos</span>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table report-table">
+                <thead>
+                  <tr>
+                    <th style="width: 28%;">Producto / Modelo</th>
+                    <th style="width: 14%;">Categoría</th>
+                    <th style="width: 32%;">Desglose de Tallas Vendidas</th>
+                    <th style="width: 10%; text-align: center;">Total Uds</th>
+                    <th style="width: 8%; text-align: right;">Total ($ Ref)</th>
+                    <th style="width: 8%; text-align: right;">Total (Bs.)</th>
+                  </tr>
+                </thead>
+                <tbody id="rep-uniforms-tbody">
+                  <tr>
+                    <td colspan="6" class="text-center text-muted" style="padding: 35px;">Seleccione una fecha o cargue el reporte diario...</td>
+                  </tr>
+                </tbody>
+                <tfoot id="rep-uniforms-tfoot" style="display: none; background: #f8fafc; font-weight: 700; border-top: 2px solid #cbd5e1;">
+                  <tr>
+                    <td colspan="3" style="padding: 12px 16px;">TOTAL CONSOLIDADO DEL DÍA</td>
+                    <td id="rep-tfoot-total-qty" style="text-align: center; padding: 12px 16px; color: #166534;">0</td>
+                    <td id="rep-tfoot-total-usd" style="text-align: right; padding: 12px 16px; color: #166534;">$0.00</td>
+                    <td id="rep-tfoot-total-ves" style="text-align: right; padding: 12px 16px; color: #0369a1;">Bs. 0,00</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+
+          <!-- SECCIÓN 2: Detalle Específico de Artículos y Pedidos -->
+          <div class="card table-card report-section-card" style="margin-top: 25px;">
+            <div class="card-header report-section-header">
+              <div class="header-left">
+                <div class="section-icon-badge order-badge"><i class="bi bi-card-checklist"></i></div>
+                <div>
+                  <h3>Registro Detallado y Desglosado de Operaciones</h3>
+                  <small class="text-muted">Detalle pormenorizado de cada pedido: cliente, artículos, tallas, precios unitarios, banco y referencia.</small>
+                </div>
+              </div>
+              <span class="counter-badge" id="rep-orders-count-badge">0 pedidos</span>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table report-table">
+                <thead>
+                  <tr>
+                    <th style="width: 11%;">Ticket</th>
+                    <th style="width: 7%;">Hora</th>
+                    <th style="width: 18%;">Cliente & Cédula</th>
+                    <th style="width: 11%;">Contacto</th>
+                    <th style="width: 25%;">Artículos & Tallas (Desglose)</th>
+                    <th style="width: 14%;">Pago / Banco / Ref</th>
+                    <th style="width: 7%; text-align: right;">Total ($)</th>
+                    <th style="width: 7%; text-align: right;">Total (Bs.)</th>
+                  </tr>
+                </thead>
+                <tbody id="rep-orders-tbody">
+                  <tr>
+                    <td colspan="8" class="text-center text-muted" style="padding: 35px;">Sin transacciones para esta fecha.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- SECCIÓN 3: Vista Previa y Copiado para WhatsApp -->
+          <div class="card report-whatsapp-card" style="margin-top: 25px;">
+            <div class="card-header report-whatsapp-header">
+              <div class="header-left">
+                <i class="bi bi-whatsapp" style="font-size: 1.3rem; color: #22c55e;"></i>
+                <div>
+                  <h3 style="margin: 0; font-size: 1.05rem;">Resumen Oficial Formateado para WhatsApp</h3>
+                  <small style="color: #64748b;">Texto listo para reenviar a la jefatura o grupo de comercialización.</small>
+                </div>
+              </div>
+              <button class="btn btn-sm btn-whatsapp" onclick="copyDailyReportWhatsApp()">
+                <i class="bi bi-clipboard-check"></i> Copiar al Portapapeles
+              </button>
+            </div>
+            <div class="card-body" style="padding: 16px 20px;">
+              <pre id="rep-whatsapp-preview" class="whatsapp-preview-box">Cargando formato de WhatsApp...</pre>
             </div>
           </div>
         </section>
