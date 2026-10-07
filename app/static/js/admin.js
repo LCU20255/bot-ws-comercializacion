@@ -287,6 +287,7 @@ function renderOrders(data) {
               <option value="CANCELADA" ${status === 'CANCELADA' ? 'selected' : ''}>CANCELADA</option>
             </select>
             <button class="btn btn-icon btn-sm" onclick="openOrderDetail(${item.id})" title="Ver Detalles"><i class="bi bi-eye"></i></button>
+            <a href="/invoice/${item.id}" target="_blank" class="btn btn-icon btn-sm" style="color: #c5a059;" title="Ver Factura / Recibo Oficial CIT"><i class="bi bi-receipt"></i></a>
             <button class="btn btn-icon btn-sm text-danger" onclick="deleteOrder(${item.id})" title="Eliminar"><i class="bi bi-trash3"></i></button>
           </div>
         </td>
@@ -474,6 +475,7 @@ function openOrderDetail(orderId) {
         <i class="bi bi-calendar-event"></i> <strong>Retiro Programado:</strong> ${formatDateDMY(order.pickup_date)} a las ${order.pickup_time}
       </div>
       <div style="display: flex; gap: 8px;">
+        <a href="/invoice/${order.id}" target="_blank" class="btn btn-sm btn-dark" style="background: #0f233a; border-color: #c5a059; color: #e6ca85;"><i class="bi bi-receipt"></i> Ver Factura / Recibo</a>
         <button class="btn btn-sm btn-primary" onclick="openEditOrderModalDirect(${order.id})"><i class="bi bi-pencil"></i> Editar</button>
         <button class="btn btn-sm btn-secondary" onclick="closeOrderModal()">Cerrar</button>
       </div>

@@ -1,6 +1,7 @@
 import io
 import os
 import shutil
+import json
 import logging
 from pathlib import Path
 from fastapi import FastAPI, Request, Response, HTTPException, Query, UploadFile, File
@@ -10,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 import xlsxwriter
+import jinja2
 
 from app.config import (
     BASE_DIR, DATA_DIR, PORT, HOST,
@@ -18,7 +20,7 @@ from app.config import (
 from app.database import (
     init_db, get_products, get_product_by_id,
     create_product, update_product, delete_product,
-    get_orders, get_order_by_id, update_order, update_order_status, delete_order,
+    get_orders, get_order_by_id, get_order_by_ticket, update_order, update_order_status, delete_order,
     mark_reminder_sent, export_orders_df,
     get_all_config, update_config, is_maintenance_active,
     get_inventory_movements, add_stock_batch, get_low_stock_products,
@@ -236,6 +238,95 @@ def admin_page():
     with open(template_path, "r", encoding="utf-8") as f:
         html_content = f.read()
     return HTMLResponse(content=html_content)
+
+# ----------------- FACTURACIÓN / RECIBO CIT -----------------
+jinja_env = jinja2.Environment(loader=jinja2.FileSystemLoader(str(BASE_DIR / "app" / "templates")), autoescape=True)
+
+@app.get("/invoice/preview", response_class=HTMLResponse)
+def invoice_preview():
+    template = jinja_env.get_template("invoice_template.html")
+    config = get_all_config()
+    bcv_rate = bcv_service.get_rate_for_date()
+    
+    mock_order = {
+        "company_rif": "G-20011500-2",
+        "company_address": config.get("pickup_address", "Sede de Intendencia Militar — Fuerte Tiuna, El Valle, Caracas, D.C."),
+        "company_phone": config.get("advisor_phone") or config.get("pagomovil_phone") or "0412-1234567",
+        "ticket_code": "CIT-261006-001",
+        "created_at": now_vet_str(),
+        "pickup_date": now_vet_date_str(),
+        "pickup_time": "09:30 AM",
+        "status": "PENDIENTE POR CONFIRMAR PAGO",
+        "client_name": "CARLOS EDUARDO PÉREZ",
+        "cedula": "V-18.456.123",
+        "phone": "0414-1234567",
+        "payment_method": "PAGO MÓVIL (BANCO DE VENEZUELA)",
+        "receipt_bank": "BANCO DE VENEZUELA",
+        "receipt_ref": "00984512",
+        "bcv_rate_applied": bcv_rate,
+        "items_summary": "1X CHAQUETA PATRIOTA TIUNA (TALLA: L) + 1X GORRA TÁCTICA PATRIOTA",
+        "items_list": [
+            {
+                "name": "CHAQUETA PATRIOTA TIUNA (MODELO OFICIAL)",
+                "size": "L",
+                "qty": 1,
+                "unit_price": 35.00,
+                "subtotal": 35.00
+            },
+            {
+                "name": "GORRA TÁCTICA PATRIOTA CIT",
+                "size": None,
+                "qty": 1,
+                "unit_price": 8.00,
+                "subtotal": 8.00
+            }
+        ],
+        "total_items": 2,
+        "subtotal_usd": 43.00,
+        "iva_amount": 0.00,
+        "amount_usd": 43.00,
+        "amount_ves": round(43.00 * bcv_rate, 2)
+    }
+    html = template.render(order=mock_order)
+    return HTMLResponse(content=html)
+
+@app.get("/invoice/{order_id}", response_class=HTMLResponse)
+def invoice_detail(order_id: int):
+    order = get_order_by_id(order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    
+    config = get_all_config()
+    bcv_rate = order.get("bcv_rate_applied") or bcv_service.get_rate_for_date()
+    
+    raw_items = order.get("items_detail")
+    items_list = []
+    if raw_items:
+        try:
+            if isinstance(raw_items, str):
+                items_list = json.loads(raw_items)
+            elif isinstance(raw_items, list):
+                items_list = raw_items
+        except Exception:
+            items_list = []
+            
+    order_data = dict(order)
+    order_data["company_rif"] = "G-20011500-2"
+    order_data["company_address"] = config.get("pickup_address", "Sede de Intendencia Militar — Fuerte Tiuna, El Valle, Caracas, D.C.")
+    order_data["company_phone"] = config.get("advisor_phone") or config.get("pagomovil_phone") or "0412-1234567"
+    order_data["items_list"] = items_list
+    order_data["bcv_rate_applied"] = bcv_rate
+    
+    template = jinja_env.get_template("invoice_template.html")
+    html = template.render(order=order_data)
+    return HTMLResponse(content=html)
+
+@app.get("/invoice/ticket/{ticket_code}", response_class=HTMLResponse)
+def invoice_by_ticket(ticket_code: str):
+    order = get_order_by_ticket(ticket_code)
+    if not order:
+        raise HTTPException(status_code=404, detail=f"Orden con ticket {ticket_code} no encontrada")
+    return invoice_detail(order["id"])
 
 # ----------------- REST API: PRODUCTS -----------------
 @app.get("/api/products")

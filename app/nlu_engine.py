@@ -136,8 +136,13 @@ class NLUEngine:
             }
 
         # 6. Basic greetings
-        greeting_words = ["hola", "buenas", "buenos dias", "buenos días", "buenas tardes", "buenas noches", "saludos", "que tal", "epale", "inicio", "empezar", "menu", "menú"]
-        if any(w == lower_text or lower_text.startswith(w) for w in greeting_words):
+        greeting_words = [
+            "hola", "buenas", "buenos dias", "buenos días", "buenas tardes", "buenas noches",
+            "saludos", "que tal", "qué tal", "epale", "épale", "inicio", "empezar", "menu", "menú",
+            "como estas", "cómo estás", "como esta", "cómo está", "hola como estas", "hola cómo estás",
+            "buenas como estas", "buenas cómo estás", "hola buenas", "hola amigo", "saludo", "buen dia", "buen día"
+        ]
+        if any(w == lower_text or lower_text.startswith(w) or f" {w} " in f" {lower_text} " for w in greeting_words):
             return {
                 "intent": "GREETING",
                 "matched_product": None,

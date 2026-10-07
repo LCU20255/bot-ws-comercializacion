@@ -132,6 +132,31 @@ class BotFlowManager:
         matched_product = analysis["matched_product"]
         extracted = analysis["extracted_data"]
 
+        # Si el usuario solicita reiniciar su registro o empezar de cero
+        if clean_text.lower() in ["reset registro", "reiniciar registro", "cambiar datos", "nuevo registro"]:
+            reset_session(phone, keep_registration=False)
+            session = get_session(phone)
+            session["is_registered"] = False
+            session["state"] = "REGISTER_NAME"
+            return self._prompt_initial_registration(session, phone)
+
+        # Saludo prioritario: si el cliente no está registrado, saludar cordialmente y pedir Nombre
+        if analysis["intent"] == "GREETING" and not session.get("is_registered"):
+            session["state"] = "REGISTER_NAME"
+            return self._prompt_initial_registration(session, phone)
+
+        # Saludo prioritario: si el cliente ya está registrado, saludar por su nombre y mostrar catálogo
+        if analysis["intent"] == "GREETING" and session.get("is_registered"):
+            client_name = session.get("client_name", "Cliente")
+            session["state"] = "CATALOG"
+            catalog_resp = self._build_catalog_menu(session, is_off_hours=is_off_hours)
+            greeting_prefix = (
+                f"👋 *¡Hola, {client_name}! ¿Cómo estás?*\n"
+                f"Bienvenido nuevamente a *SIS-COMER* (*Complejo Industrial Tiuna*).\n\n"
+            )
+            catalog_resp["reply"] = greeting_prefix + catalog_resp["reply"]
+            return catalog_resp
+
         # 3. DETECCIÓN PRIORITARIA DE INCONFORMIDAD / QUEJAS / MENSAJES NEGATIVOS
         if analysis["intent"] == "NEGATIVE_SENTIMENT":
             adv_phone = config.get("advisor_phone") or config.get("pagomovil_phone") or "0412-1234567"
@@ -335,35 +360,44 @@ class BotFlowManager:
             greeting_words = {
                 "HOLA", "BUENOS", "BUENAS", "BUENO", "BUEN", "DIAS", "DÍAS", "TARDES", "NOCHES",
                 "SALUDOS", "SALUDO", "EPALE", "ÉPALE", "CORDIAL", "ESTIMADO", "ESTIMADA",
-                "DIA", "DÍA", "INICIO", "MENU", "MENÚ", "0", "EMPEZAR", "START", "RESET",
-                "POR", "FAVOR", "GRACIAS", "OK", "VALE", "LISTO"
+                "DIA", "DÍA", "INICIO", "MENU", "MENÚ", "0", "EMPEZAR", "START", "RESET", "REINICIAR",
+                "POR", "FAVOR", "GRACIAS", "OK", "VALE", "LISTO", "COMO", "CÓMO", "ESTAS", "ESTÁS",
+                "ESTA", "ESTÁ", "USTED", "TU", "TÚ", "QUE", "QUÉ", "TAL", "AMIGO", "AMIGA", "HERMANO",
+                "HERMANA", "COMPAÑERO", "COMPAÑERA", "CAMARADA"
             }
             text_clean_words = [w for w in re.sub(r'[^\w\s]', '', clean_text).upper().split() if w]
 
             # Paso 1: Solicitar Nombre y Apellido
             if current_state in ["REGISTER_NAME", "INIT"]:
-                if not text_clean_words or all(w in greeting_words for w in text_clean_words):
+                # Si el mensaje es solo un saludo o cortesía
+                if not text_clean_words or all(w in greeting_words for w in text_clean_words) or analysis.get("intent") == "GREETING":
                     session["state"] = "REGISTER_NAME"
                     return self._prompt_initial_registration(session, phone)
 
+                # Limpiar prefijos de presentación ("Soy Carlos Perez", "Me llamo Juan", etc.)
+                clean_name = clean_text
+                clean_name = re.sub(r'^(?:¡?hola!?\s*)?(?:buenas\s*(?:tardes|dias|días|noches)?\s*,?\s*)?(?:soy|me\s+llamo|mi\s+nombre\s+es|yo\s+soy)\s+', '', clean_name, flags=re.IGNORECASE)
+                clean_name = re.sub(r'^(?:¡?hola!?\s*)?(?:buenas\s*(?:tardes|dias|días|noches)?\s*,?\s*)?', '', clean_name, flags=re.IGNORECASE).strip()
+
+                name_tokens = [w for w in re.findall(r'[a-zA-ZáéíóúÁÉÍÓÚñÑ]+', clean_name) if len(w) >= 2]
                 valid_name_words = [
-                    w for w in text_clean_words 
-                    if w not in greeting_words and w not in {
+                    w for w in name_tokens 
+                    if w.upper() not in greeting_words and w.upper() not in {
                         "PATRIOTA", "TIUNA", "CHAQUETA", "CHAQUETAS", "GORRA", "GORRAS", "BOTA", "BOTAS",
                         "MILITAR", "MILITARES", "PARCHE", "PARCHES", "TACTICA", "TACTICO", "TACTICAS", "TACTICOS",
                         "CAMPAÑA", "CAMPANA", "CAMUFLAJE", "VERDE", "NEGRO", "AZUL", "TALLA", "TALLAS",
                         "COMPRAR", "QUIERO", "PRECIO", "PRECIOS", "COSTO", "COSTOS", "CUANTO", "CUÁNTO",
                         "VALE", "TIENEN", "HAY", "STOCK", "DISPONIBLE", "CATALOGO", "CATÁLOGO", "PEDIDO",
                         "ASESOR", "HUMANO", "AYUDA", "OPCION", "OPCIÓN", "UNIDADES", "CANTIDAD", "DESPACHO"
-                    } and len(w) >= 2 and not any(c.isdigit() for c in w)
+                    } and not any(c.isdigit() for c in w)
                 ]
                 if valid_name_words:
                     session["client_name"] = " ".join(valid_name_words[:4]).title()
                     session["state"] = "REGISTER_CEDULA"
                     return {
                         "reply": (
-                            f"👍 Encantado, *{session['client_name']}*.\n\n"
-                            "🪪 *Por favor, ingrese su número de Cédula de Identidad:*\n"
+                            f"👍 ¡Hola, *{session['client_name']}*! Encantado de atenderle.\n\n"
+                            "🪪 *¿Me indicas tu número de Cédula de Identidad?*\n"
                             "*(Ejemplo: V-12345678 o 12345678)*"
                         ),
                         "image_url": None,
@@ -371,15 +405,7 @@ class BotFlowManager:
                     }
                 else:
                     session["state"] = "REGISTER_NAME"
-                    return {
-                        "reply": (
-                            "👋 *Bienvenido a SIS-COMER (Complejo Industrial Tiuna).*\n\n"
-                            "Para poder atenderle y registrar su solicitud comercial, por favor indíquenos:\n\n"
-                            "✍️ *¿Cuál es su Nombre y Apellido completo?*"
-                        ),
-                        "image_url": None,
-                        "state": "REGISTER_NAME"
-                    }
+                    return self._prompt_initial_registration(session, phone)
 
             # Paso 2: Solicitar Cédula de Identidad
             elif current_state == "REGISTER_CEDULA":
@@ -390,7 +416,7 @@ class BotFlowManager:
                     return {
                         "reply": (
                             f"🪪 Cédula registrada: *{session['cedula']}*.\n\n"
-                            "📱 *Por favor, indique su número de teléfono de contacto móvil por escrito:*\n"
+                            "📱 *¿Me indicas tu número telefónico móvil de contacto?*\n"
                             "*(Ejemplo: 0414-1234567 o 0412-1234567)*"
                         ),
                         "image_url": None,
@@ -398,7 +424,10 @@ class BotFlowManager:
                     }
                 else:
                     return {
-                        "reply": "⚠️ Por favor ingrese un número de cédula válido (ejemplo: *V-12345678* o *12345678*).",
+                        "reply": (
+                            f"⚠️ *{session.get('client_name', 'Estimado cliente')}*, por favor ingrese un número de cédula válido.\n"
+                            "*(Ejemplo: V-12345678 o 12345678)*"
+                        ),
                         "image_url": None,
                         "state": "REGISTER_CEDULA"
                     }
@@ -417,7 +446,7 @@ class BotFlowManager:
                     upsert_client(session["client_name"], session["cedula"], session["contact_phone"])
 
                     welcome_header = (
-                        f"✅ *¡Registro completado con éxito!*\n\n"
+                        f"✅ *¡Registro completado exitosamente!*\n\n"
                         f"👋 *Bienvenido(a), {session['client_name']}*\n"
                         f"🪪 *Cédula:* {session['cedula']}\n"
                         f"📱 *Teléfono:* {session['contact_phone']}\n"
@@ -1140,6 +1169,7 @@ class BotFlowManager:
                 f"🇻🇪 *Equivalente en Bs:* Bs. {session['amount_ves']:,.2f}\n"
                 f"📈 *Tasa BCV Aplicada ({formatted_receipt_date}):* Bs. {bcv_rate:.2f}/$"
                 f"{amount_note}\n"
+                "⏱️ *Nota de Seguridad:* La conciliación bancaria toma hasta *24 horas hábiles* por administración. Su requerimiento y agendamiento quedan formalmente registrados.\n"
                 "──────────────────────\n"
                 "📅 *ÚLTIMO PASO: AGENDAMIENTO DE RETIRO*\n"
                 f"📍 *Lugar:* {pickup_address}\n"
@@ -1245,10 +1275,10 @@ class BotFlowManager:
     def _prompt_initial_registration(self, session: Dict[str, Any], phone: str) -> Dict[str, Any]:
         return {
             "reply": (
-                "👋 *¡Bienvenido! Soy SIS-COMER, tu asistente virtual.*\n"
+                "👋 *¡Hola! ¿Cómo estás? Bienvenido a SIS-COMER.*\n"
                 "🏭 *Complejo Industrial Tiuna — Equipo de Comercialización*\n\n"
-                "Para gestionar su pedido, por favor indíquenos sus datos de identificación:\n\n"
-                "✍️ *Por favor, escriba su NOMBRE Y APELLIDO COMPLETO:*"
+                "Para poder atenderle y registrar su solicitud de compra, por favor indíquenos:\n\n"
+                "✍️ *¿Me puedes indicar tu Nombre y Apellido completo?*"
             ),
             "image_url": None,
             "state": "REGISTER_NAME"
@@ -1257,10 +1287,15 @@ class BotFlowManager:
     def _try_extract_all_registration_data(self, text: str, session: Dict[str, Any], phone: str):
         """Si el usuario envía todo en un bloque ej: 'Pedro Perez V-15432123 0414-1234567'"""
         ci = nlu.extract_cedula(text)
+        ph = nlu.extract_phone(text)
+
+        # Solo intentar extracción en bloque si al menos envió Cédula o Teléfono
+        if not ci and not ph:
+            return
+
         if ci and not session.get("cedula"):
             session["cedula"] = ci.upper()
 
-        ph = nlu.extract_phone(text)
         if ph and not session.get("contact_phone"):
             formatted = self._format_phone(ph)
             if formatted:
@@ -1272,7 +1307,9 @@ class BotFlowManager:
         greeting_words = {
             "HOLA", "BUENOS", "BUENAS", "BUENO", "BUEN", "DIAS", "DÍAS", "TARDES", "NOCHES",
             "SALUDOS", "SALUDO", "EPALE", "ÉPALE", "CORDIAL", "ESTIMADO", "ESTIMADA",
-            "DIA", "DÍA", "INICIO", "MENU", "MENÚ", "0", "AYUDA", "POR", "FAVOR", "GRACIAS"
+            "DIA", "DÍA", "INICIO", "MENU", "MENÚ", "0", "AYUDA", "POR", "FAVOR", "GRACIAS",
+            "COMO", "CÓMO", "ESTAS", "ESTÁS", "ESTA", "ESTÁ", "USTED", "TU", "TÚ", "QUE", "QUÉ", "TAL",
+            "AMIGO", "AMIGA", "HERMANO", "HERMANA"
         }
         product_blacklist = {
             "PATRIOTA", "TIUNA", "CHAQUETA", "CHAQUETAS", "GORRA", "GORRAS", "BOTA", "BOTAS",
@@ -1284,7 +1321,13 @@ class BotFlowManager:
             "RETIRAR", "RETIRO", "PAGO", "TRANSFERENCIA", "PAGOMOVIL"
         }
         
-        text_clean_words = re.sub(r'[^\w\s]', '', text).upper().split()
+        cleaned_for_name = text
+        if ci:
+            cleaned_for_name = re.sub(re.escape(ci), '', cleaned_for_name, flags=re.IGNORECASE)
+        if ph:
+            cleaned_for_name = re.sub(re.escape(ph), '', cleaned_for_name, flags=re.IGNORECASE)
+
+        text_clean_words = re.sub(r'[^\w\s]', '', cleaned_for_name).upper().split()
         if text_clean_words and all(w in (greeting_words | product_blacklist) for w in text_clean_words):
             return
 
@@ -1418,7 +1461,7 @@ class BotFlowManager:
         ]
         for it in cart:
             sz_str = f" (Talla: {it['size']})" if it.get("size") else ""
-            item_name = it.get("raw_name") or item.get("name")
+            item_name = it.get("raw_name") or it.get("name")
             lines.append(f"• *{it['qty']}x {item_name}*{sz_str} — ${it['subtotal']:.2f} Ref")
 
         lines.append("──────────────────────")
@@ -1439,6 +1482,8 @@ class BotFlowManager:
         lines.append(tr_account.strip())
         lines.append(tr_holder.strip())
 
+        lines.append("\n⏱️ *AVISO DE SEGURIDAD Y VALIDACIÓN:*")
+        lines.append("La conciliación y validación de pagos en cuenta bancaria toma hasta *24 horas hábiles* por parte del departamento de finanzas. Su solicitud y agendamiento quedan garantizados y reservados inmediatamente con el envío de su comprobante.")
         lines.append("\n──────────────────────")
         lines.append("📸 *POR FAVOR ADJUNTE LA FOTO O CAPTURA DE SU COMPROBANTE EN ESTE CHAT*")
         lines.append("*(Nuestro sistema OCR leerá los datos del comprobante automáticamente)*\n")

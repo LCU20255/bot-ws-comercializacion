@@ -510,8 +510,8 @@ def get_client_by_phone(phone: str) -> Optional[Dict[str, Any]]:
     digits = re.sub(r'\D', '', clean_phone)
     cursor.execute("SELECT * FROM clients WHERE phone = ?", (clean_phone,))
     row = cursor.fetchone()
-    if not row and len(digits) >= 7:
-        cursor.execute("SELECT * FROM clients WHERE phone LIKE ?", (f"%{digits[-7:]}%",))
+    if not row and len(digits) >= 10:
+        cursor.execute("SELECT * FROM clients WHERE phone LIKE ?", (f"%{digits[-10:]}%",))
         row = cursor.fetchone()
     conn.close()
     return dict(row) if row else None
