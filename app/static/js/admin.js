@@ -267,6 +267,7 @@ function renderOrders(data) {
         <td style="font-size: 0.78rem; color: #475569;">
           <div style="font-weight: 700; color: #1e293b;">${item.receipt_bank || item.payment_method || 'PAGO MÓVIL'}</div>
           ${item.receipt_ref ? `<span class="badge" style="background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; font-family: monospace; font-size: 0.75rem;">Ref: ${item.receipt_ref}</span>` : '<span class="text-muted" style="font-size: 0.72rem;">Sin Ref OCR</span>'}
+          ${item.receipt_image_url ? `<a href="${item.receipt_image_url}" target="_blank" title="Ver Comprobante Original" class="badge" style="background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; text-decoration: none; margin-left: 4px;"><i class="bi bi-image"></i> Foto</a>` : ''}
         </td>
         <td>
           <div style="font-weight: 600; color: #1e293b;"><i class="bi bi-calendar3 text-muted"></i> ${formatDateDMY(item.pickup_date)}</div>
@@ -460,6 +461,14 @@ function openOrderDetail(orderId) {
           <span>Tasa BCV Aplicada en Pago:</span>
           <strong>Bs. ${order.bcv_rate_applied ? order.bcv_rate_applied.toFixed(4) : '-'} / $</strong>
         </div>
+        ${order.receipt_image_url ? `
+        <div class="ocr-field-row" style="margin-top: 8px;">
+          <span>Foto del Comprobante:</span>
+          <a href="${order.receipt_image_url}" target="_blank" class="btn btn-sm" style="background: #0284c7; color: white; padding: 3px 10px; font-size: 0.75rem; text-decoration: none; border-radius: 6px;">
+            <i class="bi bi-file-earmark-image"></i> Ver Comprobante Original
+          </a>
+        </div>
+        ` : ''}
       </div>
 
       <!-- Formulario para editar datos bancarios si el cliente se equivocó -->

@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flujograma Integral de Procesos — Bot WhatsApp SIS-COMER (CIT)</title>
+    
+    <!-- Fuentes Google -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+    
+    <!-- FontAwesome 6 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Mermaid.js para diagramación vectorial estándar de ingeniería -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <!-- svg-pan-zoom para mover y agrandar el diagrama interactivamente -->
+    <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+
+    <style>
+        :root {
+            --bg-canvas: #090e17;
+            --bg-panel: #111827;
+            --border-panel: rgba(255, 255, 255, 0.12);
+            --text-title: #ffffff;
+            --text-sub: #94a3b8;
+            --font-main: 'Outfit', sans-serif;
+            --font-code: 'JetBrains Mono', monospace;
+
+            /* Colores Vivos Oficiales del Diagrama */
+            --c-blue: #2563eb;       /* Entrada / Saludo / Registro */
+            --c-cyan: #06b6d4;       /* Catálogo / Tasa BCV */
+            --c-amber: #f59e0b;      /* Rombo Decisión / Stock Limitado */
+            --c-purple: #8b5cf6;     /* NLU / Carrito Multilínea */
+            --c-yellow: #eab308;     /* Pago / 3 Datos Sagrados */
+            --c-green: #10b981;      /* Éxito / Factura QR / Citas */
+            --c-red: #ef4444;        /* Rechazos / Failsafes / Cancelar */
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: var(--font-main);
+            background-color: var(--bg-canvas);
+            color: #f1f5f9;
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* BARRA SUPERIOR DE CONTROL & PRESENTACIÓN */
+        .top-toolbar {
+            background: #0f172a;
+            border-bottom: 2px solid rgba(59, 130, 246, 0.35);
+            padding: 0.65rem 1.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 50;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+            flex-shrink: 0;
+        }
+
+        .tool-brand {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .badge-cit {
+            background: linear-gradient(135deg, #1e40af, #3b82f6);
+            color: #fff;
+            font-weight: 900;
+            padding: 0.4rem 0.8rem;
+            border-radius: 8px;
+            font-size: 1.1rem;
+            letter-spacing: 0.08em;
+            box-shadow: 0 0 15px rgba(59, 130, 246, 0.5);
+        }
+
+        .title-block h1 {
+            font-size: 1.1rem;
+            font-weight: 800;
+            color: #fff;
+            letter-spacing: -0.01em;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .title-block p {
+            font-size: 0.75rem;
+            color: #38bdf8;
+            font-weight: 600;
+        }
+
+        .tool-actions {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+        }
+
+        .btn-act {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45rem;
+            padding: 0.55rem 1rem;
+            border-radius: 8px;
+            font-weight: 700;
+            font-size: 0.82rem;
+            cursor: pointer;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            background: rgba(255, 255, 255, 0.08);
+            color: #e2e8f0;
+            transition: all 0.2s ease;
+        }
+
+        .btn-act:hover {
+            background: rgba(255, 255, 255, 0.18);
+            color: #fff;
+            transform: translateY(-1px);
+        }
+
+        .btn-print {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+            border: none;
+            box-shadow: 0 4px 15px rgba(16, 185, 129, 0.35);
+        }
+        .btn-print:hover {
+            box-shadow: 0 6px 20px rgba(16, 185, 129, 0.5);
+        }
+
+        .btn-legend-toggle {
+            background: linear-gradient(135deg, #8b5cf6, #6366f1);
+            color: white;
+            border: none;
+        }
+
+        /* CONTENEDOR PRINCIPAL DEL DIAGRAMA */
+        .workspace {
+            flex: 1;
+            position: relative;
+            background: radial-gradient(circle at 50% 50%, #111a2e 0%, #070b12 100%);
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #diagram-viewport {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: grab;
+        }
+
+        #diagram-viewport:active {
+            cursor: grabbing;
+        }
+
+        #diagram-svg-container {
+            width: 100%;
+            height: 100%;
+        }
+
+        #diagram-svg-container svg {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        /* CONTROLES FLOTANTES DE ZOOM Y NAVEGACIÓN */
+        .zoom-controls {
+            position: absolute;
+            bottom: 24px;
+            right: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            z-index: 40;
+            background: rgba(15, 23, 42, 0.85);
+            backdrop-filter: blur(12px);
+            padding: 8px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        }
+
+        .zoom-btn {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            background: rgba(255, 255, 255, 0.08);
+            color: #f1f5f9;
+            font-size: 1.1rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .zoom-btn:hover {
+            background: #2563eb;
+            color: white;
+            border-color: #60a5fa;
+        }
+
+        /* PANEL LATERAL DE LEYENDA PEDAGÓGICA (PARA APRENDER Y EXPONER) */
+        .legend-drawer {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            width: 340px;
+            max-height: calc(100vh - 110px);
+            background: rgba(15, 23, 42, 0.94);
+            backdrop-filter: blur(16px);
+            border: 1.5px solid rgba(59, 130, 246, 0.4);
+            border-radius: 16px;
+            padding: 1.25rem;
+            z-index: 40;
+            box-shadow: 0 15px 40px rgba(0,0,0,0.6);
+            overflow-y: auto;
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .legend-drawer.hidden {
+            transform: translateX(-370px);
+        }
+
+        .legend-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            padding-bottom: 0.6rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .legend-header h3 {
+            font-size: 0.98rem;
+            font-weight: 800;
+            color: #38bdf8;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .legend-close {
+            background: none;
+            border: none;
+            color: #94a3b8;
+            font-size: 1.1rem;
+            cursor: pointer;
+        }
+
+        .legend-close:hover {
+            color: #fff;
+        }
+
+        .legend-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.65rem;
+            font-size: 0.82rem;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.65rem;
+            padding: 0.45rem 0.6rem;
+            background: rgba(255, 255, 255, 0.04);
+            border-radius: 8px;
+            border-left: 4px solid transparent;
+        }
+
+        .legend-sym {
+            width: 24px;
+            height: 24px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            color: #fff;
+            font-weight: 900;
+            flex-shrink: 0;
+        }
+
+        .legend-txt strong {
+            display: block;
+            color: #fff;
+            font-size: 0.84rem;
+        }
+        .legend-txt span {
+            color: #94a3b8;
+            font-size: 0.76rem;
+        }
+
+        .speaker-tip-box {
+            margin-top: 1rem;
+            background: rgba(37, 99, 235, 0.15);
+            border: 1px dashed #3b82f6;
+            border-radius: 10px;
+            padding: 0.85rem;
+            font-size: 0.78rem;
+            line-height: 1.45;
+            color: #cbd5e1;
+        }
+        .speaker-tip-box strong {
+            color: #60a5fa;
+            display: block;
+            margin-bottom: 0.25rem;
+        }
+
+        /* MODAL DE DETALLE DEL NODO SELECCIONADO */
+        .node-modal-backdrop {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(8px);
+            z-index: 100;
+            display: none;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .node-modal {
+            background: #111827;
+            border: 2px solid #3b82f6;
+            border-radius: 18px;
+            width: 90%;
+            max-width: 580px;
+            padding: 2rem;
+            box-shadow: 0 25px 60px rgba(0,0,0,0.8);
+            position: relative;
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 16px;
+            right: 18px;
+            background: none;
+            border: none;
+            color: #94a3b8;
+            font-size: 1.4rem;
+            cursor: pointer;
+        }
+        .modal-close:hover { color: #fff; }
+
+        .modal-tag {
+            font-size: 0.75rem;
+            font-weight: 800;
+            font-family: var(--font-code);
+            padding: 0.3rem 0.75rem;
+            border-radius: 6px;
+            display: inline-block;
+            margin-bottom: 0.75rem;
+        }
+
+        .modal-title {
+            font-size: 1.35rem;
+            font-weight: 800;
+            color: #fff;
+            margin-bottom: 0.75rem;
+        }
+
+        .modal-desc {
+            font-size: 0.95rem;
+            color: #cbd5e1;
+            line-height: 1.55;
+            margin-bottom: 1.25rem;
+        }
+
+        .modal-dialogue {
+            background: #020617;
+            border-radius: 12px;
+            padding: 1rem;
+            border-left: 4px solid #10b981;
+            font-size: 0.88rem;
+            color: #a7f3d0;
+            font-family: var(--font-code);
+            white-space: pre-wrap;
+            margin-bottom: 1rem;
+        }
+
+        .modal-tip {
+            background: rgba(245, 158, 11, 0.12);
+            border: 1px solid rgba(245, 158, 11, 0.4);
+            border-radius: 10px;
+            padding: 0.85rem 1rem;
+            font-size: 0.85rem;
+            color: #fde68a;
+        }
+
+        /* ========================================================= */
+        /* REGLAS DE IMPRESIÓN Y PDF PERFECTO (@media print)        */
+        /* ========================================================= */
+        @media print {
+            @page {
+                size: landscape;
+                margin: 5mm;
+            }
+
+            body {
+                background: #ffffff !important;
+                color: #0f172a !important;
+                height: auto !important;
+                width: auto !important;
+                overflow: visible !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+
+            .top-toolbar, .zoom-controls, .legend-drawer, .node-modal-backdrop {
+                display: none !important;
+            }
+
+            .workspace {
+                background: #ffffff !important;
+                overflow: visible !important;
+                height: 100vh !important;
+                width: 100% !important;
+            }
+
+            #diagram-viewport {
+                cursor: default !important;
+                height: 100% !important;
+                width: 100% !important;
+            }
+
+            #diagram-svg-container svg {
+                max-width: 100% !important;
+                height: auto !important;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- BARRA SUPERIOR DE CONTROL -->
+    <header class="top-toolbar">
+        <div class="tool-brand">
+            <div class="badge-cit">CIT</div>
+            <div class="title-block">
+                <h1>
+                    <i class="fa-solid fa-diagram-project" style="color: #60a5fa;"></i>
+                    Flujograma Oficial Completo — Bot SIS-COMER
+                </h1>
+                <p>Complejo Industrial Tiuna — Diagrama Técnico de Operaciones (Uso Interno para Exponer)</p>
+            </div>
+        </div>
+
+        <div class="tool-actions">
+            <button class="btn-act btn-legend-toggle" onclick="toggleLegend()">
+                <i class="fa-solid fa-map"></i> Ver Leyenda
+            </button>
+            <button class="btn-act" onclick="fitDiagram()">
+                <i class="fa-solid fa-compress"></i> Ajustar Pantalla
+            </button>
+            <button class="btn-act btn-print" onclick="window.print()">
+                <i class="fa-solid fa-file-pdf"></i> Guardar en PDF / Imprimir
+            </button>
+        </div>
+    </header>
+
+    <!-- ÁREA DEL DIAGRAMA -->
+    <main class="workspace">
+
+        <!-- LEYENDA LATERAL FLOTANTE -->
+        <aside class="legend-drawer" id="legend-drawer">
+            <div class="legend-header">
+                <h3><i class="fa-solid fa-palette"></i> Código de Colores Vivos</h3>
+                <button class="legend-close" onclick="toggleLegend()">&times;</button>
+            </div>
+
+            <div class="legend-list">
+                <div class="legend-item" style="border-left-color: var(--c-blue);">
+                    <div class="legend-sym" style="background: var(--c-blue);"><i class="fa-solid fa-user"></i></div>
+                    <div class="legend-txt">
+                        <strong>Azul Eléctrico: Entrada & Registro</strong>
+                        <span>Ingreso de cliente, filtro anti-risas, Cédula y Teléfono</span>
+                    </div>
+                </div>
+
+                <div class="legend-item" style="border-left-color: var(--c-cyan);">
+                    <div class="legend-sym" style="background: var(--c-cyan);"><i class="fa-solid fa-store"></i></div>
+                    <div class="legend-txt">
+                        <strong>Cian Brillante: Catálogo & Tasa BCV</strong>
+                        <span>Productos con stock > 0 y tasa oficial del día</span>
+                    </div>
+                </div>
+
+                <div class="legend-item" style="border-left-color: var(--c-amber);">
+                    <div class="legend-sym" style="background: var(--c-amber);"><i class="fa-solid fa-diamond"></i></div>
+                    <div class="legend-txt">
+                        <strong>Ámbar / Amarillo: Decisiones y Filtros</strong>
+                        <span>Bifurcaciones Sí / No, stock limitado y confirmaciones</span>
+                    </div>
+                </div>
+
+                <div class="legend-item" style="border-left-color: var(--c-purple);">
+                    <div class="legend-sym" style="background: var(--c-purple);"><i class="fa-solid fa-cart-shopping"></i></div>
+                    <div class="legend-txt">
+                        <strong>Púrpura: NLU & Carrito Multilínea</strong>
+                        <span>Procesa pedidos largos ignorando saludos</span>
+                    </div>
+                </div>
+
+                <div class="legend-item" style="border-left-color: #f97316;">
+                    <div class="legend-sym" style="background: #f97316;"><i class="fa-solid fa-clipboard-list"></i></div>
+                    <div class="legend-txt">
+                        <strong>Naranja: Lista de Espera (Waitlist)</strong>
+                        <span>Prendas agotadas se anotan para producción textil</span>
+                    </div>
+                </div>
+
+                <div class="legend-item" style="border-left-color: var(--c-yellow);">
+                    <div class="legend-sym" style="background: var(--c-yellow);"><i class="fa-solid fa-receipt"></i></div>
+                    <div class="legend-txt">
+                        <strong>Dorado: Los 3 Datos Sagrados de Pago</strong>
+                        <span>Banco Emisor + Referencia (4-12 dig) + Fecha de Pago</span>
+                    </div>
+                </div>
+
+                <div class="legend-item" style="border-left-color: var(--c-green);">
+                    <div class="legend-sym" style="background: var(--c-green);"><i class="fa-solid fa-circle-check"></i></div>
+                    <div class="legend-txt">
+                        <strong>Verde Esmeralda: Aprobado & Factura QR</strong>
+                        <span>Ticket oficial, cita en Fuerte Tiuna y PDF WeasyPrint</span>
+                    </div>
+                </div>
+
+                <div class="legend-item" style="border-left-color: var(--c-red);">
+                    <div class="legend-sym" style="background: var(--c-red);"><i class="fa-solid fa-shield-virus"></i></div>
+                    <div class="legend-txt">
+                        <strong>Rojo Rubí: Failsafes & Cancelación</strong>
+                        <span>Foto huérfana borrada de disco y '0' blindado</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="speaker-tip-box">
+                <strong>💡 Tip para tu Exposición:</strong>
+                Puedes usar la rueda del ratón para hacer zoom, o hacer clic y arrastrar para moverte por todo el mapa. Al pulsar "Guardar en PDF", se exportará en formato apaisado (horizontal) de alta definición.
+            </div>
+        </aside>
+
+        <!-- VIEWPORT DE MERMAID -->
+        <div id="diagram-viewport">
+            <div id="diagram-svg-container">
+                <!-- DIAGRAMA MERMAID CON TODO EL FLUJO OPERATIVO -->
+                <pre class="mermaid" id="mermaid-code">
+flowchart TD
+    %% ============================================================
+    %% DEFINICIÓN DE ESTILOS Y COLORES VIVOS
+    %% ============================================================
+    classDef startEnd fill:#10b981,stroke:#059669,stroke-width:3px,color:#ffffff,font-weight:bold;
+    classDef regNode fill:#1d4ed8,stroke:#60a5fa,stroke-width:2px,color:#ffffff;
+    classDef decNode fill:#b45309,stroke:#f59e0b,stroke-width:3px,color:#ffffff,font-weight:bold;
+    classDef catNode fill:#0e7490,stroke:#22d3ee,stroke-width:2px,color:#ffffff;
+    classDef cartNode fill:#6d28d9,stroke:#a78bfa,stroke-width:2px,color:#ffffff;
+    classDef waitNode fill:#c2410c,stroke:#fb923c,stroke-width:2px,color:#ffffff;
+    classDef payNode fill:#a16207,stroke:#facc15,stroke-width:2px,color:#ffffff;
+    classDef failNode fill:#b91c1c,stroke:#f87171,stroke-width:2px,color:#ffffff;
+    classDef okNode fill:#047857,stroke:#34d399,stroke-width:2px,color:#ffffff;
+    classDef dbNode fill:#334155,stroke:#94a3b8,stroke-width:2px,color:#f8fafc;
+
+    %% ============================================================
+    %% 1. ENTRADA Y REGISTRO MILITAR
+    %% ============================================================
+    INICIO(["🟢 INICIO: Cliente escribe a WhatsApp<br/>(Hola, quiero comprar, etc.)"]):::startEnd
+    
+    Q_REG{"¿Cliente Registrado<br/>en BD SQLite?"}:::decNode
+    INICIO --> Q_REG
+
+    Q_REG -->|NO: Cliente Nuevo| SOLICITAR_NOMBRE["📱 Solicita Nombre y Apellido<br/>(Filtro anti-risas 'jajaja' activo)"]:::regNode
+    
+    Q_NAME{"¿Nombre válido?<br/>(No es '.' ni 'jaja')"}:::decNode
+    SOLICITAR_NOMBRE --> Q_NAME
+
+    Q_NAME -->|NO| RECHAZA_NOMBRE["⚠️ Pide educadamente<br/>Nombre y Apellido real"]:::failNode
+    RECHAZA_NOMBRE --> SOLICITAR_NOMBRE
+
+    Q_NAME -->|SÍ| PEDIR_CI["📱 Solicita Cédula de Identidad<br/>(Ej: V-12345678)"]:::regNode
+    PEDIR_CI --> PEDIR_TLF["📱 Solicita Teléfono de contacto"]:::regNode
+    PEDIR_TLF --> SAVE_CLIENT[("🗄️ Registra en tabla 'clients'<br/>Auditoría militar completa")]:::dbNode
+    SAVE_CLIENT --> BIENVENIDA
+
+    Q_REG -->|SÍ: Ya Registrado| BIENVENIDA["👋 Saludo Personalizado por su Nombre<br/>y Tasa BCV del Día"]:::regNode
+
+    %% ============================================================
+    %% 2. CATÁLOGO Y TASA BCV
+    %% ============================================================
+    BIENVENIDA --> CONSULTA_CAT[("📊 Consulta API BCV + BD Products<br/>Filtra solo artículos con Stock > 0")]:::catNode
+    CONSULTA_CAT --> SHOW_MENU["📋 Despliega Catálogo Oficial en WhatsApp:<br/>• Precios en Ref $ y Bs (BCV)<br/>• [4] Lista de Espera<br/>• [5] Asesor Humano"]:::catNode
+
+    SHOW_MENU --> MSG_CLIENTE["📱 Cliente selecciona producto<br/>o escribe pedido multilínea"]:::cartNode
+
+    %% ============================================================
+    %% 3. CONTROL ESTRICTO DE INVENTARIO
+    %% ============================================================
+    Q_STOCK{"¿Disponibilidad en Almacén Fuerte Tiuna?"}:::decNode
+    MSG_CLIENTE --> Q_STOCK
+
+    %% RUTA 3A: STOCK CERO / AGOTADO
+    Q_STOCK -->|Stock = 0 / Agotado| OFRECE_WAIT["⚠️ Artículo Agotado<br/>¿Desea anotarse en Lista de Espera?"]:::waitNode
+    Q_WAIT{"¿Acepta Lista<br/>de Espera?"}:::decNode
+    OFRECE_WAIT --> Q_WAIT
+    Q_WAIT -->|SÍ: Opción 1| SAVE_WAIT[("📋 Guarda en 'product_waitlist'<br/>Alerta a fábrica textil CIT")]:::waitNode
+    SAVE_WAIT --> SHOW_MENU
+    Q_WAIT -->|NO: Opción 2| SHOW_MENU
+
+    %% RUTA 3B: STOCK MENOR A LO PEDIDO
+    Q_STOCK -->|Pide más del stock real| LIM_STOCK["⚠️ STOCK LIMITADO (CONFIRMING_LIMITED_STOCK)<br/>Solo quedan X unidades disponibles"]:::waitNode
+    Q_LIM{"¿Qué decide el cliente?"}:::decNode
+    LIM_STOCK --> Q_LIM
+    Q_LIM -->|1. Llevar disponibles| ADD_DISPONIBLES["✅ Ajusta cantidad a las disponibles"]:::cartNode
+    Q_LIM -->|2. Otra cantidad| MSG_CLIENTE
+    Q_LIM -->|3. Catálogo| SHOW_MENU
+
+    %% RUTA 3C: STOCK SUFICIENTE
+    Q_STOCK -->|Stock Suficiente| ADD_CART["🛒 Agrega prendas al Carrito Multilínea<br/>Calcula subtotal en $ Ref y Bs"]:::cartNode
+    ADD_DISPONIBLES --> ADD_CART
+
+    %% ============================================================
+    %% 4. REVISIÓN DE CARRITO Y PROTECCIÓN DE SESIÓN
+    %% ============================================================
+    ADD_CART --> VER_CARRITO["🛍️ Resumen del Carrito:<br/>[1] Agregar otro producto<br/>[2] Proceder al Pago<br/>[3] Vaciar carrito"]:::cartNode
+
+    Q_CART_ACTION{"¿Acción en Carrito?"}:::decNode
+    VER_CARRITO --> Q_CART_ACTION
+    Q_CART_ACTION -->|Opción 1| SHOW_MENU
+    Q_CART_ACTION -->|Opción 3| SHOW_MENU
+    Q_CART_ACTION -->|Opción 2: Proceder al Pago| SEND_PAY_DATA["💳 Envía Datos de Pago Móvil CIT<br/>+ Monto exacto en Bolívares (BCV)"]:::payNode
+
+    %% ============================================================
+    %% 5. PROCESO DE COBRO Y LOS 3 DATOS SAGRADOS
+    %% ============================================================
+    Q_PAY_MSG{"¿Qué envía el cliente?"}:::decNode
+    SEND_PAY_DATA --> Q_PAY_MSG
+
+    %% ESCENARIO SEGURIDAD: COMANDO 0 EN PAGO
+    Q_PAY_MSG -->|Escribe '0' o 'inicio'| CHECK_ZERO{"🛡️ Protección de Pedido:<br/>Pide confirmar con CANCELAR"}:::failNode
+    CHECK_ZERO -->|Escribe 'CANCELAR'| SHOW_MENU
+    CHECK_ZERO -->|Sigue pagando| SEND_PAY_DATA
+
+    %% ESCENARIO SEGURIDAD: FOTO HUÉRFANA SIN PEDIDO
+    Q_PAY_MSG -->|Foto de comprobante| Q_ACTIVE_ORDER{"¿Tiene Pedido Activo<br/>en estado de cobro?"}:::decNode
+    Q_ACTIVE_ORDER -->|NO: Foto Huérfana| DROP_PHOTO["🗑️ Borra foto de disco inmediatamente<br/>y avisa que no tiene deudas pendientes"]:::failNode
+    DROP_PHOTO --> SHOW_MENU
+
+    %% ESCENARIO: EXTRACCIÓN OCR Y 3 DATOS SAGRADOS
+    Q_ACTIVE_ORDER -->|SÍ: Pedido Activo| OCR_EXTRACT["🔍 OCR Tesseract + Regex Bancario<br/>Busca Banco, Referencia y Fecha"]:::payNode
+
+    Q_3_DATOS{"¿Están los 3 Datos Sagrados?<br/>• Banco Emisor<br/>• Referencia 4-12 dig<br/>• Fecha de Pago"}:::decNode
+    OCR_EXTRACT --> Q_3_DATOS
+
+    Q_3_DATOS -->|FALTA ALGÚN DATO| ASK_MISSING["⚠️ Semáforo de Comprobante:<br/>Muestra datos detectados ✅<br/>y pide SOLO el dato faltante ❌"]:::payNode
+    ASK_MISSING --> Q_PAY_MSG
+
+    Q_3_DATOS -->|COMPLETO 100%| VALIDAR_TASA_HISTORICA["🏛️ Aplica Tasa BCV Oficial<br/>de la Fecha exacta en que se pagó"]:::okNode
+
+    %% ============================================================
+    %% 6. AGENDAMIENTO DE CITA EN FUERTE TIUNA
+    %% ============================================================
+    VALIDAR_TASA_HISTORICA --> AGENDA_CITA["📅 Selecciona Cita de Retiro en Sede Tiuna:<br/>1. Elige Día (Hoy, Mañana, etc.)<br/>2. Elige Turno (Mañana o Tarde)"]:::okNode
+
+    AGENDA_CITA --> GEN_TICKET["🎫 Asigna Ticket Oficial CIT<br/>Ej: CIT-20261007-001"]:::okNode
+
+    %% ============================================================
+    %% 7. FACTURA WEASYPRINT PDF CON QR Y DESPACHO
+    %% ============================================================
+    GEN_TICKET --> GEN_PDF[("📄 WeasyPrint compila Factura Oficial<br/>con Código QR para alcabalas")]:::dbNode
+
+    GEN_PDF --> SEND_WA["📤 Envía Documento PDF adjunto a WhatsApp<br/>+ Mensaje de confirmación final"]:::okNode
+
+    SEND_WA --> PURGE_DISK["🧹 Limpieza de Servidor:<br/>os.remove(temp_pdf) protege disco"]:::okNode
+
+    PURGE_DISK --> NOTIF_ADMIN[("🔔 Alerta en tiempo real en Panel SIS-COMER:<br/>Almacén empaqueta orden para entrega")]:::dbNode
+
+    NOTIF_ADMIN --> FIN(["🏁 FIN: Pedido Pagado, Facturado y Listo para Retiro"]):::startEnd
+                </pre>
+            </div>
+        </div>
+
+        <!-- CONTROLES FLOTANTES DE ZOOM -->
+        <div class="zoom-controls">
+            <button class="zoom-btn" onclick="zoomIn()" title="Acercar (Zoom In)"><i class="fa-solid fa-plus"></i></button>
+            <button class="zoom-btn" onclick="zoomOut()" title="Alejar (Zoom Out)"><i class="fa-solid fa-minus"></i></button>
+            <button class="zoom-btn" onclick="resetZoom()" title="Centrar / Reiniciar"><i class="fa-solid fa-arrows-to-dot"></i></button>
+        </div>
+
+    </main>
+
+    <!-- MODAL DE INFORMACIÓN DETALLADA AL HACER CLIC EN UN NODO -->
+    <div class="node-modal-backdrop" id="node-modal-backdrop" onclick="closeModal(event)">
+        <div class="node-modal" onclick="event.stopPropagation()">
+            <button class="modal-close" onclick="closeModal()">&times;</button>
+            <span class="modal-tag" id="m-tag" style="background:#2563eb; color:#fff;">FASE OPERATIVA</span>
+            <h2 class="modal-title" id="m-title">Título del Proceso</h2>
+            <p class="modal-desc" id="m-desc">Descripción del funcionamiento interno y las reglas aplicadas.</p>
+            <div class="modal-dialogue" id="m-dialogue">Ejemplo de diálogo en WhatsApp...</div>
+            <div class="modal-tip" id="m-tip"><strong>Guión para el expositor:</strong> Qué decir ante tus superiores.</div>
+        </div>
+    </div>
+
+    <script>
+        let panZoomInstance = null;
+
+        // Inicializar Mermaid y SVG Pan Zoom
+        document.addEventListener('DOMContentLoaded', () => {
+            mermaid.initialize({
+                startOnLoad: true,
+                theme: 'dark',
+                securityLevel: 'loose',
+                flowchart: {
+                    useMaxWidth: false,
+                    htmlLabels: true,
+                    curve: 'basis'
+                }
+            });
+
+            // Esperar a que Mermaid dibuje el SVG
+            setTimeout(() => {
+                const svg = document.querySelector('#diagram-svg-container svg');
+                if (svg) {
+                    svg.setAttribute('id', 'main-flowchart-svg');
+                    panZoomInstance = svgPanZoom('#main-flowchart-svg', {
+                        zoomEnabled: true,
+                        controlIconsEnabled: false,
+                        fit: true,
+                        center: true,
+                        minZoom: 0.2,
+                        maxZoom: 5,
+                        zoomScaleSensitivity: 0.25
+                    });
+                }
+            }, 800);
+        });
+
+        // Controles de Zoom
+        function zoomIn() {
+            if (panZoomInstance) panZoomInstance.zoomIn();
+        }
+        function zoomOut() {
+            if (panZoomInstance) panZoomInstance.zoomOut();
+        }
+        function resetZoom() {
+            if (panZoomInstance) {
+                panZoomInstance.resetZoom();
+                panZoomInstance.center();
+            }
+        }
+        function fitDiagram() {
+            if (panZoomInstance) {
+                panZoomInstance.fit();
+                panZoomInstance.center();
+            }
+        }
+
+        // Alternar Leyenda
+        function toggleLegend() {
+            const drawer = document.getElementById('legend-drawer');
+            drawer.classList.toggle('hidden');
+        }
+
+        // Cerrar Modal
+        function closeModal() {
+            document.getElementById('node-modal-backdrop').style.display = 'none';
+        }
+
+        // Cerrar con Escape
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeModal();
+        });
+    </script>
+</body>
+</html>

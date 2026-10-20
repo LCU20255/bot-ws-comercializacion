@@ -41,9 +41,9 @@ def get_session(phone: str) -> Dict[str, Any]:
             "welcome_sent": is_reg,    # Flag para saber si ya se le envió el saludo inicial
             "cart": [],                # [{"product_id", "name", "qty", "unit_price", "subtotal", "size"}]
             "client_name": existing_client.get("name") if is_reg else None,       # MAYÚSCULAS
-            "cedula": existing_client.get("cedula") if is_reg else None,            # MAYÚSCULAS
             "contact_phone": existing_client.get("phone") if is_reg else None,     # Teléfono real de contacto
             "phone": phone,            # JID / ID de WhatsApp para envío
+            "receipt_image_url": None,
             "receipt_ref": None,
             "receipt_bank": None,
             "receipt_date": None,
@@ -75,6 +75,7 @@ def reset_session(phone: str, keep_registration: bool = True):
         "cedula": ci if is_reg else None,
         "contact_phone": c_phone if is_reg else None,
         "phone": phone,
+        "receipt_image_url": None,
         "receipt_ref": None,
         "receipt_bank": None,
         "receipt_date": None,
@@ -224,7 +225,7 @@ class BotFlowManager:
         in_flow_states = [
             "SELECTING_SIZE", "SELECTING_QUANTITY", "CONFIRMING_LIMITED_STOCK",
             "CART_VIEW", "ADDING_MORE", "AWAITING_PAYMENT", "CONFIRMING_PAYMENT_DATA",
-            "AWAITING_SCHEDULE", "WAITLIST_CONFIRM", "WAITLIST_PRODUCT", "WAITLIST_NAME"
+            "AWAITING_SCHEDULE", "WAITLIST_CONFIRM", "WAITLIST_PRODUCT", "WAITLIST_NAME", "WAITLIST_PHONE"
         ]
         is_laugh = bool(re.search(r'\b(jaj[a-z]*|hah[a-z]*|jeje[a-z]*|xd|lol)\b', clean_text.lower()))
         is_greeting = analysis.get("intent") == "GREETING"
@@ -273,7 +274,7 @@ class BotFlowManager:
                     "image_url": None,
                     "state": "AWAITING_SCHEDULE"
                 }
-            elif current_state in ["WAITLIST_CONFIRM", "WAITLIST_PRODUCT", "WAITLIST_NAME"]:
+            elif current_state in ["WAITLIST_CONFIRM", "WAITLIST_PRODUCT", "WAITLIST_NAME", "WAITLIST_PHONE"]:
                 pname = session.get("waitlist_product_name", "el artículo")
                 return {
                     "reply": f"👋 Para registrar su aviso de stock para *{pname}*, por favor responda *1* para confirmar o *2* para volver al catálogo.",
@@ -869,8 +870,18 @@ class BotFlowManager:
             if clean_text in ["1", "si", "sí", "avisar", "avisame", "avísame", "esperar", "lista"]:
                 prod_name = session.get("waitlist_product_name", "Producto Solicitado")
                 prod_id = session.get("waitlist_product_id")
+
+                # Obtener el teléfono real del cliente (el que proporcionó al pedirle su número de teléfono)
+                client_phone = session.get("contact_phone")
+                if not client_phone:
+                    c_rec = get_client_by_phone(phone)
+                    if c_rec and c_rec.get("phone"):
+                        client_phone = c_rec["phone"]
+                if not client_phone:
+                    client_phone = phone
+
                 if session.get("client_name") and session["client_name"] != "CLIENTE":
-                    add_to_waitlist(phone, session["client_name"], prod_name, prod_id)
+                    add_to_waitlist(client_phone, session["client_name"], prod_name, prod_id)
                     session["state"] = "CATALOG"
                     return {
                         "reply": (
@@ -911,8 +922,16 @@ class BotFlowManager:
                 return self._build_catalog_menu(session, is_off_hours=is_off_hours)
 
             session["waitlist_product_name"] = clean_text.upper()
+            client_phone = session.get("contact_phone")
+            if not client_phone:
+                c_rec = get_client_by_phone(phone)
+                if c_rec and c_rec.get("phone"):
+                    client_phone = c_rec["phone"]
+            if not client_phone:
+                client_phone = phone
+
             if session.get("client_name") and session["client_name"] != "CLIENTE":
-                add_to_waitlist(phone, session["client_name"], session["waitlist_product_name"])
+                add_to_waitlist(client_phone, session["client_name"], session["waitlist_product_name"])
                 session["state"] = "CATALOG"
                 return {
                     "reply": (
@@ -946,7 +965,26 @@ class BotFlowManager:
             session["client_name"] = clean_text.upper()
             prod_name = session.get("waitlist_product_name", "Producto Solicitado")
             prod_id = session.get("waitlist_product_id")
-            add_to_waitlist(phone, session["client_name"], prod_name, prod_id)
+
+            client_phone = session.get("contact_phone")
+            if not client_phone:
+                c_rec = get_client_by_phone(phone)
+                if c_rec and c_rec.get("phone"):
+                    client_phone = c_rec["phone"]
+
+            if not client_phone:
+                session["state"] = "WAITLIST_PHONE"
+                return {
+                    "reply": (
+                        f"👍 Gracias, *{session['client_name']}*.\n\n"
+                        "📱 *¿Me indicas tu número de teléfono de contacto?*\n"
+                        "*(Ejemplo: 0414-1234567 o 0412-1234567)*"
+                    ),
+                    "image_url": None,
+                    "state": "WAITLIST_PHONE"
+                }
+
+            add_to_waitlist(client_phone, session["client_name"], prod_name, prod_id)
             session["state"] = "CATALOG"
             return {
                 "reply": (
@@ -958,6 +996,45 @@ class BotFlowManager:
                 "image_url": None,
                 "state": "CATALOG"
             }
+
+        # -------------------------------------------------------------
+        # ESTADO: CAPTURA DE TELÉFONO PARA LISTA DE ESPERA
+        # -------------------------------------------------------------
+        elif current_state == "WAITLIST_PHONE":
+            if clean_text in ["0", "menu", "menú", "cancelar"]:
+                reset_session(phone, keep_registration=True)
+                return self._build_catalog_menu(session, is_off_hours=is_off_hours)
+
+            extracted_ph = nlu.extract_phone(clean_text)
+            contact_ph = self._format_phone(extracted_ph) if extracted_ph else None
+            if not contact_ph and self._is_valid_phone(clean_text):
+                contact_ph = self._format_phone(clean_text)
+            if not contact_ph and clean_text.strip() == "1" and self._is_valid_phone(phone):
+                contact_ph = self._format_phone(phone)
+
+            if contact_ph:
+                session["contact_phone"] = contact_ph
+                prod_name = session.get("waitlist_product_name", "Producto Solicitado")
+                prod_id = session.get("waitlist_product_id")
+                c_name = session.get("client_name", "CLIENTE")
+                add_to_waitlist(contact_ph, c_name, prod_name, prod_id)
+                session["state"] = "CATALOG"
+                return {
+                    "reply": (
+                        f"✅ *¡Perfecto, {c_name}! Nos estaremos comunicando con usted cuando el producto que requiera esté disponible.*\n\n"
+                        f"Hemos registrado su solicitud para *{prod_name}* en el sistema de *Complejo Industrial Tiuna — Equipo de Comercialización*.\n\n"
+                        "En cuanto ingrese stock o sea incorporado al inventario, el sistema le enviará un mensaje automático a su número de WhatsApp.\n\n"
+                        "¡Gracias por contactarnos! (Escriba *0* si desea volver al catálogo)."
+                    ),
+                    "image_url": None,
+                    "state": "CATALOG"
+                }
+            else:
+                return {
+                    "reply": "⚠️ Por favor ingrese su número telefónico de contacto venezolano por escrito (ejemplo: *0414-1234567* o *0412-1234567*):",
+                    "image_url": None,
+                    "state": "WAITLIST_PHONE"
+                }
 
         # -------------------------------------------------------------
         # ESTADO 3: SELECCIÓN DE TALLA
@@ -1630,6 +1707,7 @@ class BotFlowManager:
             "receipt_ref": session.get("receipt_ref"),
             "receipt_bank": session.get("receipt_bank"),
             "receipt_date": session.get("receipt_date"),
+            "receipt_image_url": session.get("receipt_image_url"),
             "ocr_raw_text": session.get("ocr_raw_text"),
             "ocr_data_json": session.get("ocr_data_json"),
             "manual_payment_data": session.get("manual_payment_data"),
@@ -1692,6 +1770,7 @@ class BotFlowManager:
         return {
             "reply": (
                 "👋 *¡Hola! ¿Cómo estás? Bienvenido a SIS-COMER.*\n"
+                "Soy *SIS-COMER*, tu asistente virtual.\n"
                 "🏭 *Complejo Industrial Tiuna — Equipo de Comercialización*\n\n"
                 "Para poder atenderle y registrar su solicitud de compra, por favor indíquenos:\n\n"
                 "✍️ *¿Me puedes indicar tu Nombre y Apellido completo?*"

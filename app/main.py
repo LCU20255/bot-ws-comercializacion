@@ -34,7 +34,8 @@ from app.database import (
     get_daily_sales_report, get_order_status_history, reset_operational_data
 )
 from app.time_utils import now_vet, now_vet_str, now_vet_date_str, format_date_dmy, format_datetime_dmy
-from app.bot_flow import bot_manager, reset_session
+from app.bot_flow import bot_manager, reset_session, get_session
+from app.storage_service import storage_service
 from app.bcv_service import bcv_service
 from app.whatsapp_service import notify_waitlist_stock_available, wa_service
 import qrcode
@@ -433,22 +434,25 @@ async def api_upload_image(file: UploadFile = File(...)):
         image.thumbnail((800, 800), Image.Resampling.LANCZOS)
 
         safe_filename = f"prod_{timestamp}_{safe_stem}.{ext}"
-        file_path = images_dir / safe_filename
-
+        import io
+        img_buffer = io.BytesIO()
         if target_format == "JPEG":
-            image.save(file_path, format="JPEG", quality=85, optimize=True)
+            image.save(img_buffer, format="JPEG", quality=85, optimize=True)
+            ct = "image/jpeg"
         else:
-            image.save(file_path, format="PNG", optimize=True)
+            image.save(img_buffer, format="PNG", optimize=True)
+            ct = "image/png"
+        img_bytes = img_buffer.getvalue()
 
-        return {"status": "ok", "url": f"/static/images/{safe_filename}"}
+        public_url = storage_service.upload_catalog_image(img_bytes, safe_filename, content_type=ct)
+        return {"status": "ok", "url": public_url}
     except Exception as e:
         logger.error(f"Error optimizando imagen con Pillow: {e}")
         file.file.seek(0)
+        fallback_bytes = file.file.read()
         fallback_name = f"prod_{timestamp}_{safe_stem}_{uuid.uuid4().hex[:6]}.jpg"
-        file_path = images_dir / fallback_name
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        return {"status": "ok", "url": f"/static/images/{fallback_name}"}
+        public_url = storage_service.upload_catalog_image(fallback_bytes, fallback_name, content_type="image/jpeg")
+        return {"status": "ok", "url": public_url}
 
 # ----------------- REST API: ORDERS / CITAS -----------------
 @app.get("/api/orders")
@@ -861,13 +865,22 @@ def api_export_daily_report_excel(date: Optional[str] = None):
 def api_simulate_chat(body: SimulateChatSchema):
     # Si viene con imagen de comprobante adjunta
     if body.image_base64:
+        img_bytes = base64.b64decode(body.image_base64)
+        clean_ph = re.sub(r'[^0-9]', '', body.phone)
+        rcpt_filename = f"rcpt_{clean_ph}_{int(now_vet().timestamp())}_{uuid.uuid4().hex[:6]}.jpg"
+        receipt_url = storage_service.upload_receipt_image(img_bytes, rcpt_filename, content_type="image/jpeg")
+
+        session = get_session(body.phone)
+        session["receipt_image_url"] = receipt_url
+
         temp_img_name = f"temp_rcpt_{uuid.uuid4().hex[:8]}.jpg"
         temp_img_path = DATA_DIR / temp_img_name
         try:
             with open(temp_img_path, "wb") as f:
-                f.write(base64.b64decode(body.image_base64))
+                f.write(img_bytes)
             # process_receipt_image procesa el OCR y destruye inmediatamente el archivo temporal
             res = bot_manager.process_receipt_image(body.phone, str(temp_img_path), caption=body.message or "")
+            res["receipt_image_url"] = receipt_url
             return res
         except Exception as e:
             logger.error(f"Error decodificando comprobante de pago: {e}")
@@ -888,14 +901,23 @@ async def api_process_receipt(
     caption: Optional[str] = Query(default=""),
     file: UploadFile = File(...)
 ):
-    """Sube una imagen de comprobante bancario vía multipart, extrae datos por OCR y purga el archivo del disco"""
+    """Sube una imagen de comprobante bancario vía multipart, extrae datos por OCR y almacena en Supabase Storage"""
+    file_bytes = await file.read()
+    clean_ph = re.sub(r'[^0-9]', '', phone)
+    rcpt_filename = f"rcpt_{clean_ph}_{int(now_vet().timestamp())}_{uuid.uuid4().hex[:6]}.jpg"
+    receipt_url = storage_service.upload_receipt_image(file_bytes, rcpt_filename, content_type=file.content_type or "image/jpeg")
+
+    session = get_session(phone)
+    session["receipt_image_url"] = receipt_url
+
     temp_img_name = f"upload_rcpt_{uuid.uuid4().hex[:8]}.jpg"
     temp_img_path = DATA_DIR / temp_img_name
     with open(temp_img_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+        buffer.write(file_bytes)
     
-    # Procesa y destruye el archivo de inmediato
+    # Procesa y destruye el archivo temporal local de inmediato
     res = bot_manager.process_receipt_image(phone, str(temp_img_path), caption=caption or "")
+    res["receipt_image_url"] = receipt_url
     return res
 
 @app.post("/api/chat/reset")

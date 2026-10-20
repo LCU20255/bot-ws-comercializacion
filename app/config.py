@@ -16,6 +16,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DATABASE_PATH}")
 # Supabase (Optional)
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+SUPABASE_STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET", "siscomer")
 
 # Gemini AI (Optional, smart fallback active if not provided)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")

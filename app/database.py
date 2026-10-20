@@ -6,7 +6,7 @@ from datetime import datetime, time
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import pandas as pd
-from app.config import DATA_DIR, SUPABASE_URL, SUPABASE_KEY
+from app.config import DATA_DIR, SUPABASE_URL, SUPABASE_KEY, DATABASE_URL
 from app.time_utils import (
     now_vet,
     now_vet_str,
@@ -20,8 +20,150 @@ logger = logging.getLogger(__name__)
 DB_FILE = DATA_DIR / "commercial_bot.db"
 _initializing_db = False
 
+TABLES_WITH_ID = {
+    "products", "clients", "orders", "order_status_history", 
+    "inventory_movements", "product_waitlist"
+}
+
+def is_postgres() -> bool:
+    url = (DATABASE_URL or "").strip().lower()
+    return url.startswith("postgres://") or url.startswith("postgresql://")
+
+def get_normalized_db_url() -> str:
+    url = (DATABASE_URL or "").strip()
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
+    return url
+
+def adapt_sql_for_pg(sql: str):
+    # 1. Reemplazar funciones de fecha SQLite por PostgreSQL
+    sql = re.sub(r"datetime\('now',\s*'-4 hours'\)", "(NOW() AT TIME ZONE 'America/Caracas')", sql, flags=re.IGNORECASE)
+    
+    # 2. Reemplazar placeholders '?' por '%s' fuera de cadenas de texto
+    parts = []
+    in_str = False
+    quote_char = ''
+    i = 0
+    while i < len(sql):
+        c = sql[i]
+        if not in_str and (c == "'" or c == '"'):
+            in_str = True
+            quote_char = c
+            parts.append(c)
+        elif in_str and c == quote_char:
+            if i + 1 < len(sql) and sql[i+1] == quote_char:
+                parts.append(c)
+                parts.append(c)
+                i += 1
+            else:
+                in_str = False
+                parts.append(c)
+        elif not in_str and c == '?':
+            parts.append('%s')
+        else:
+            parts.append(c)
+        i += 1
+    sql = "".join(parts)
+
+    # 3. Detectar si requiere RETURNING id para INSERT
+    is_insert = bool(re.match(r'^\s*INSERT\s+INTO\s+([a-zA-Z0-9_]+)', sql, flags=re.IGNORECASE))
+    should_return_id = False
+    if is_insert and "RETURNING" not in sql.upper():
+        m = re.match(r'^\s*INSERT\s+INTO\s+([a-zA-Z0-9_]+)', sql, flags=re.IGNORECASE)
+        if m:
+            table_name = m.group(1).lower()
+            if table_name in TABLES_WITH_ID:
+                sql = sql.rstrip().rstrip(';') + " RETURNING id"
+                should_return_id = True
+
+    return sql, should_return_id
+
+class PgCursorWrapper:
+    def __init__(self, pg_cursor):
+        self._cursor = pg_cursor
+        self.lastrowid = None
+
+    def execute(self, sql, params=None):
+        adapted_sql, should_return_id = adapt_sql_for_pg(sql)
+        if params is not None:
+            self._cursor.execute(adapted_sql, params)
+        else:
+            self._cursor.execute(adapted_sql)
+
+        if should_return_id:
+            try:
+                row = self._cursor.fetchone()
+                if row:
+                    self.lastrowid = row[0]
+            except Exception:
+                self.lastrowid = None
+        return self
+
+    def fetchone(self):
+        return self._cursor.fetchone()
+
+    def fetchall(self):
+        return self._cursor.fetchall()
+
+    def fetchmany(self, size=None):
+        return self._cursor.fetchmany(size) if size else self._cursor.fetchmany()
+
+    @property
+    def description(self):
+        return self._cursor.description
+
+    @property
+    def rowcount(self):
+        return self._cursor.rowcount
+
+    def close(self):
+        self._cursor.close()
+
+    def __iter__(self):
+        return iter(self._cursor)
+
+class PgConnectionWrapper:
+    def __init__(self, raw_conn):
+        self._conn = raw_conn
+
+    def cursor(self):
+        import psycopg2.extras
+        cur = self._conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        return PgCursorWrapper(cur)
+
+    def commit(self):
+        self._conn.commit()
+
+    def rollback(self):
+        self._conn.rollback()
+
+    def close(self):
+        self._conn.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type:
+            self.rollback()
+        else:
+            self.commit()
+        self.close()
+
 def get_connection():
     global _initializing_db
+    if is_postgres():
+        import psycopg2
+        raw_conn = psycopg2.connect(get_normalized_db_url())
+        conn = PgConnectionWrapper(raw_conn)
+        if not _initializing_db:
+            _initializing_db = True
+            try:
+                init_db(conn=conn)
+            finally:
+                _initializing_db = False
+        return conn
+
     DATA_DIR.mkdir(exist_ok=True)
     db_existed = DB_FILE.exists()
     conn = sqlite3.connect(str(DB_FILE))
@@ -34,6 +176,7 @@ def get_connection():
             _initializing_db = False
     return conn
 
+
 def init_db(conn=None):
     """
     Inicializa de forma automática y segura la base de datos si no existe.
@@ -42,14 +185,148 @@ def init_db(conn=None):
     """
     should_close = False
     if conn is None:
-        DATA_DIR.mkdir(exist_ok=True)
-        conn = sqlite3.connect(str(DB_FILE))
-        conn.row_factory = sqlite3.Row
+        conn = get_connection()
         should_close = True
 
     cursor = conn.cursor()
 
-    # 1. Tabla: products (Productos con auditoría)
+    if is_postgres():
+        # PostgreSQL / Supabase
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS products (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            slug VARCHAR(255) UNIQUE,
+            description TEXT,
+            price NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+            price_display VARCHAR(100),
+            category VARCHAR(100) DEFAULT 'TEXTIL MILITAR',
+            image_url TEXT DEFAULT '/static/images/placeholder.png',
+            stock INTEGER DEFAULT 0,
+            is_active INTEGER DEFAULT 1,
+            requires_size INTEGER DEFAULT 0,
+            min_stock_alert INTEGER DEFAULT 20,
+            available_sizes TEXT DEFAULT '',
+            keywords TEXT DEFAULT '',
+            technical_specs TEXT DEFAULT '',
+            fabric TEXT DEFAULT '',
+            buttons_closures TEXT DEFAULT '',
+            durability TEXT DEFAULT '',
+            thickness_weight TEXT DEFAULT '',
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'America/Caracas'),
+            updated_by VARCHAR(100) DEFAULT 'ADMIN'
+        );
+        """)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS clients (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            cedula VARCHAR(50) UNIQUE NOT NULL,
+            phone VARCHAR(50) NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'America/Caracas')
+        );
+        """)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS orders (
+            id SERIAL PRIMARY KEY,
+            ticket_code VARCHAR(50) UNIQUE NOT NULL,
+            client_name VARCHAR(255) NOT NULL,
+            cedula VARCHAR(50) NOT NULL,
+            phone VARCHAR(50) NOT NULL,
+            items_summary TEXT NOT NULL,
+            items_detail JSONB NOT NULL DEFAULT '[]'::jsonb,
+            total_items INTEGER NOT NULL DEFAULT 1,
+            total_amount NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+            amount_usd NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+            amount_ves NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
+            bcv_rate_applied NUMERIC(12, 4) NOT NULL DEFAULT 0.00,
+            bcv_rate_date VARCHAR(50),
+            payment_method VARCHAR(100) NOT NULL,
+            receipt_ref VARCHAR(100),
+            receipt_bank VARCHAR(100),
+            receipt_date VARCHAR(50),
+            receipt_image_url TEXT,
+            ocr_raw_text TEXT,
+            manual_payment_data TEXT,
+            ocr_data_json TEXT,
+            iva_amount NUMERIC(12, 2) DEFAULT 0.00,
+            pickup_date VARCHAR(50) NOT NULL,
+            pickup_time VARCHAR(50) NOT NULL,
+            status VARCHAR(100) DEFAULT 'PENDIENTE POR ATENCIÓN',
+            is_off_hours INTEGER DEFAULT 0,
+            reminder_sent INTEGER DEFAULT 0,
+            notes TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'America/Caracas'),
+            synced_to_supabase INTEGER DEFAULT 1
+        );
+        """)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS order_status_history (
+            id SERIAL PRIMARY KEY,
+            order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+            ticket_code VARCHAR(50),
+            previous_status VARCHAR(100),
+            new_status VARCHAR(100) NOT NULL,
+            changed_by VARCHAR(100) DEFAULT 'ADMIN',
+            notes TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'America/Caracas')
+        );
+        """)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS inventory_movements (
+            id SERIAL PRIMARY KEY,
+            product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+            movement_type VARCHAR(50) NOT NULL,
+            quantity INTEGER NOT NULL,
+            previous_stock INTEGER NOT NULL,
+            new_stock INTEGER NOT NULL,
+            order_id INTEGER,
+            client_name VARCHAR(255),
+            created_by VARCHAR(100) DEFAULT 'SISTEMA',
+            notes TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'America/Caracas')
+        );
+        """)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS bcv_rates (
+            rate_date VARCHAR(50) PRIMARY KEY,
+            rate NUMERIC(12, 4) NOT NULL,
+            updated_at VARCHAR(50) NOT NULL
+        );
+        """)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS system_config (
+            key VARCHAR(100) PRIMARY KEY,
+            value TEXT
+        );
+        """)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS product_waitlist (
+            id SERIAL PRIMARY KEY,
+            phone VARCHAR(50) NOT NULL,
+            client_name VARCHAR(255),
+            product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
+            product_name VARCHAR(255) NOT NULL,
+            status VARCHAR(50) DEFAULT 'PENDIENTE',
+            notes TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'America/Caracas'),
+            notified_at VARCHAR(50)
+        );
+        """)
+        try:
+            cursor.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS receipt_image_url TEXT;")
+            conn.commit()
+        except Exception:
+            pass
+        if should_close:
+            conn.close()
+        try:
+            seed_product_technical_specs()
+        except Exception:
+            pass
+        return
+
+    # 1. Tabla: products (Productos con auditoría SQLite)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS products (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -117,6 +394,7 @@ def init_db(conn=None):
         receipt_ref TEXT,
         receipt_bank TEXT,
         receipt_date TEXT,
+        receipt_image_url TEXT,
         ocr_raw_text TEXT,
         pickup_date TEXT NOT NULL,         -- YYYY-MM-DD
         pickup_time TEXT NOT NULL,         -- 09:00 AM
@@ -138,6 +416,7 @@ def init_db(conn=None):
         ("receipt_ref", "TEXT"),
         ("receipt_bank", "TEXT"),
         ("receipt_date", "TEXT"),
+        ("receipt_image_url", "TEXT"),
         ("ocr_raw_text", "TEXT"),
         ("manual_payment_data", "TEXT"),
         ("ocr_data_json", "TEXT"),
@@ -554,6 +833,7 @@ def create_order(data: Dict[str, Any]) -> Dict[str, Any]:
     receipt_ref = data.get("receipt_ref")
     receipt_bank = data.get("receipt_bank")
     receipt_date = data.get("receipt_date")
+    receipt_image_url = data.get("receipt_image_url")
     ocr_raw_text = data.get("ocr_raw_text")
 
     manual_payment_data = data.get("manual_payment_data")
@@ -575,18 +855,18 @@ def create_order(data: Dict[str, Any]) -> Dict[str, Any]:
             ticket_code, client_name, cedula, phone,
             items_summary, items_detail, total_items, total_amount,
             amount_usd, amount_ves, bcv_rate_applied, bcv_rate_date,
-            payment_method, receipt_ref, receipt_bank, receipt_date, ocr_raw_text,
+            payment_method, receipt_ref, receipt_bank, receipt_date, receipt_image_url, ocr_raw_text,
             manual_payment_data, ocr_data_json, iva_amount,
             pickup_date, pickup_time, status, is_off_hours, notes, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         ticket_code, client_name, cedula, phone,
         items_summary, items_detail_json,
         int(data.get("total_items", 1)),
         total_amount,
         amount_usd, amount_ves, bcv_rate_applied, bcv_rate_date,
-        payment_method, receipt_ref, receipt_bank, receipt_date, ocr_raw_text,
+        payment_method, receipt_ref, receipt_bank, receipt_date, receipt_image_url, ocr_raw_text,
         manual_payment_data_str, ocr_data_json_str, iva_amount,
         data.get("pickup_date", now_vet_date_str()),
         data.get("pickup_time", "09:00 AM"),
@@ -684,7 +964,7 @@ def update_order(order_id: int, data: Dict[str, Any]) -> bool:
 
     extra_sets = []
     extra_vals = []
-    for field in ["receipt_ref", "receipt_bank", "receipt_date", "amount_usd", "amount_ves"]:
+    for field in ["receipt_ref", "receipt_bank", "receipt_date", "receipt_image_url", "amount_usd", "amount_ves"]:
         if field in data and data[field] is not None:
             extra_sets.append(f"{field} = ?")
             extra_vals.append(data[field])
@@ -1016,13 +1296,14 @@ def is_within_business_hours() -> bool:
 # ----------------- EXPORTS EXCEL / CSV -----------------
 def export_orders_df() -> pd.DataFrame:
     conn = get_connection()
+    raw_conn = getattr(conn, "_conn", conn)
     df = pd.read_sql_query("""
         SELECT ticket_code, client_name, cedula, phone, items_summary,
                total_items, total_amount, payment_method, pickup_date,
                pickup_time, status, is_off_hours, reminder_sent, created_at, notes
         FROM orders
         ORDER BY id DESC
-    """, conn)
+    """, raw_conn)
     conn.close()
 
     df.columns = [
