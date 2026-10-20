@@ -91,6 +91,9 @@
           <button class="btn btn-primary" onclick="switchToReportTab()" style="background: #166534; border-color: #166534;">
             <i class="bi bi-file-earmark-bar-graph"></i> Cierre Diario
           </button>
+          <button class="btn btn-success" id="btn-toggle-bot" onclick="toggleBotEnabled()" style="font-weight: 600; background: #16a34a; border-color: #16a34a;">
+            <i class="bi bi-robot" id="bot-toggle-icon"></i> <span id="bot-status-label">Bot: HABILITADO</span>
+          </button>
           <button class="btn btn-warning" id="btn-toggle-maint" onclick="toggleMaintenance()">
             <i class="bi bi-wrench-adjustable-circle"></i> <span id="maint-label">Mantenimiento: OFF</span>
           </button>
@@ -102,6 +105,13 @@
           </button>
         </div>
       </header>
+
+      <!-- Banner de Alerta si el Bot está Deshabilitado / Pausado -->
+      <div id="bot-disabled-alert-bar" class="maint-banner" style="display: none; background: #fef3c7; border: 1px solid #f59e0b; color: #92400e;">
+        <i class="bi bi-pause-circle-fill" style="color: #d97706; font-size: 1.25rem;"></i>
+        <span><strong>BOT EN MODO PAUSA (ATENCIÓN MANUAL):</strong> WhatsApp permanece vinculado pero el bot NO responderá automáticamente, permitiéndote atender a los clientes personalmente.</span>
+        <button class="btn btn-sm btn-success" onclick="toggleBotEnabled()" style="background: #16a34a; border-color: #16a34a; font-weight: 600;">Habilitar Bot (Dar Play)</button>
+      </div>
 
       <!-- Banner de Alerta si Mantenimiento está Activo -->
       <div id="maint-alert-bar" class="maint-banner" style="display: none;">
@@ -572,15 +582,34 @@
               </div>
               <div class="card-body" style="padding: 28px 24px;">
 
+                <!-- Control Principal de Activación del Bot ("Habilitar Bot / Play") -->
+                <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px 20px; margin-bottom: 22px; text-align: left; display: flex; align-items: center; justify-content: space-between; gap: 15px; box-shadow: inset 0 1px 3px rgba(0,0,0,0.03);">
+                  <div>
+                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                      <i class="bi bi-robot" style="font-size: 1.3rem; color: #166534;"></i>
+                      <strong style="color: #0f172a; font-size: 1.05rem;">Control de Respuestas Automáticas</strong>
+                      <span id="bot-status-tag" class="badge-status connected" style="font-size: 0.75rem; padding: 3px 8px;">ACTIVO</span>
+                    </div>
+                    <p style="margin: 0; font-size: 0.85rem; color: #64748b; line-height: 1.4;">
+                      Permite escanear el QR y mantener la línea conectada sin que el bot responda hasta que decidas activarlo ("Darle Play").
+                    </p>
+                  </div>
+                  <button id="btn-tab-toggle-bot" class="btn btn-warning" onclick="toggleBotEnabled()" style="white-space: nowrap; font-weight: 700; padding: 10px 18px; border-radius: 8px;">
+                    <i class="bi bi-pause-fill" id="btn-tab-bot-icon"></i> <span id="btn-tab-bot-label">Pausar Bot</span>
+                  </button>
+                </div>
+
                 <!-- Estado Conectado Banner -->
                 <div id="box-connected" style="display: none; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 10px; padding: 24px; margin-bottom: 20px;">
                   <div style="font-size: 3rem; color: #16a34a; margin-bottom: 8px;">
                     <i class="bi bi-check-circle-fill"></i>
                   </div>
                   <h4 style="color: #065f46; font-size: 1.3rem; margin-bottom: 6px; font-weight: 700;">¡Línea SIS-COMER Conectada con Éxito!</h4>
-                  <p style="color: #047857; margin-bottom: 16px; font-size: 0.95rem;">
-                    El bot de comercialización está <strong>ACTIVO</strong> y respondiendo en tiempo real en la línea:
-                    <br><strong id="conn-phone" style="font-size: 1.25rem; font-family: 'JetBrains Mono', monospace; color: #0f172a; display: inline-block; margin-top: 6px;"></strong>
+                  <p id="conn-bot-status-desc" style="color: #047857; margin-bottom: 12px; font-size: 0.95rem;">
+                    El bot de comercialización está <strong>HABILITADO</strong> y respondiendo en tiempo real en la línea:
+                  </p>
+                  <p style="margin-bottom: 18px;">
+                    <strong id="conn-phone" style="font-size: 1.25rem; font-family: 'JetBrains Mono', monospace; color: #0f172a; display: inline-block;"></strong>
                   </p>
                   <button class="btn btn-danger" onclick="unlinkWhatsApp()" style="background: #dc2626; color: white; border: none; padding: 10px 18px; font-weight: 600; border-radius: 8px; cursor: pointer;">
                     <i class="bi bi-box-arrow-left"></i> Desvincular / Cambiar Línea

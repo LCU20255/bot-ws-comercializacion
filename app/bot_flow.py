@@ -15,6 +15,7 @@ from app.database import (
     get_product_by_id,
     create_order,
     get_all_config,
+    is_bot_enabled,
     is_maintenance_active,
     is_within_business_hours,
     add_to_waitlist,
@@ -115,6 +116,17 @@ class BotFlowManager:
         advisor_name = config.get("advisor_name", "ASESOR COMERCIAL")
         pickup_address = config.get("pickup_address", "SEDE DE INTENDENCIA - COMPLEJO INDUSTRIAL TIUNA")
         pickup_hours = config.get("pickup_hours", "LUNES A VIERNES DE 8:00 AM A 5:00 PM")
+
+        # 0. VERIFICAR SI EL BOT ESTÁ HABILITADO ("HABILITAR BOT / PLAY")
+        if not is_bot_enabled():
+            logger.info(f"Bot deshabilitado/pausado. Mensaje de {phone} no respondido para permitir atención manual.")
+            return {
+                "reply": "",
+                "messages": [],
+                "image_url": None,
+                "state": "BOT_DISABLED",
+                "bot_enabled": False
+            }
 
         # 1. VERIFICAR MODO MANTENIMIENTO
         if is_maintenance_active():
@@ -1514,6 +1526,16 @@ class BotFlowManager:
         Recibe la imagen del comprobante, ejecuta análisis venezolano,
         purga inmediatamente el archivo de disco, y avanza el flujo sin tecnicismos.
         """
+        if not is_bot_enabled():
+            logger.info(f"Bot deshabilitado/pausado. Comprobante de {phone} no procesado por bot para atención manual.")
+            return {
+                "reply": "",
+                "messages": [],
+                "image_url": None,
+                "state": "BOT_DISABLED",
+                "bot_enabled": False
+            }
+
         session = get_session(phone)
         parsed = ReceiptOCRService.process_and_destroy_receipt(image_path, simulated_hint_text=caption)
         

@@ -40,6 +40,7 @@ def adapt_sql_for_pg(sql: str):
     sql = re.sub(r"datetime\('now',\s*'-4 hours'\)", "(NOW() AT TIME ZONE 'America/Caracas')", sql, flags=re.IGNORECASE)
     
     # 2. Reemplazar placeholders '?' por '%s' fuera de cadenas de texto
+    # Y escapar '%' dentro o fuera de literales para que psycopg2 no lance IndexError
     parts = []
     in_str = False
     quote_char = ''
@@ -58,8 +59,23 @@ def adapt_sql_for_pg(sql: str):
             else:
                 in_str = False
                 parts.append(c)
+        elif in_str and c == '%':
+            if i + 1 < len(sql) and sql[i+1] == '%':
+                parts.append('%%')
+                i += 1
+            else:
+                parts.append('%%')
         elif not in_str and c == '?':
             parts.append('%s')
+        elif not in_str and c == '%':
+            if i + 1 < len(sql) and sql[i+1] == '%':
+                parts.append('%%')
+                i += 1
+            elif i + 1 < len(sql) and sql[i+1] == 's':
+                parts.append('%s')
+                i += 1
+            else:
+                parts.append('%%')
         else:
             parts.append(c)
         i += 1
@@ -1229,6 +1245,7 @@ def mark_reminder_sent(order_id: int):
 # ----------------- SYSTEM CONFIG -----------------
 DEFAULT_SYSTEM_CONFIG = {
     "bot_name": "SIS-COMER - Equipo de Comercialización",
+    "bot_enabled": "1",
     "maintenance_mode": "0",
     "maintenance_message": "¡Hola! En este momento nos encontramos en proceso de mantenimiento. Por favor comunícate con nosotros el día de mañana de 8:00 AM a 5:00 PM.",
     "business_hours_start": "08:00",
@@ -1264,9 +1281,27 @@ def update_config(config_dict: Dict[str, str]):
     conn = get_connection()
     cursor = conn.cursor()
     for k, v in config_dict.items():
-        cursor.execute("INSERT OR REPLACE INTO system_config (key, value) VALUES (?, ?)", (k, str(v)))
+        if is_postgres():
+            cursor.execute("""
+                INSERT INTO system_config (key, value) VALUES (%s, %s)
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+            """, (k, str(v)))
+        else:
+            cursor.execute("INSERT OR REPLACE INTO system_config (key, value) VALUES (?, ?)", (k, str(v)))
     conn.commit()
     conn.close()
+
+def is_bot_enabled() -> bool:
+    """Verifica si el bot automatizado está habilitado para responder mensajes de clientes."""
+    config = get_all_config()
+    return config.get("bot_enabled", "1") == "1"
+
+def toggle_bot_enabled() -> bool:
+    """Invierte el estado de activación del bot (Habilitado / Pausado)."""
+    current = is_bot_enabled()
+    new_val = "0" if current else "1"
+    update_config({"bot_enabled": new_val})
+    return new_val == "1"
 
 def is_maintenance_active() -> bool:
     config = get_all_config()
@@ -1670,12 +1705,20 @@ def get_daily_sales_report(target_date: Optional[str] = None) -> Dict[str, Any]:
     cursor = conn.cursor()
 
     # Consultar pedidos de la fecha excluyendo cancelados y anulados
-    cursor.execute("""
-        SELECT * FROM orders
-        WHERE (date(created_at) = ? OR created_at LIKE ? || '%')
-          AND UPPER(status) NOT IN ('CANCELADA', 'CANCELADO', 'ANULADA', 'ANULADO')
-        ORDER BY id ASC
-    """, (date_str, date_str))
+    if is_postgres():
+        cursor.execute("""
+            SELECT * FROM orders
+            WHERE (created_at::date = %s::date OR date(created_at) = %s::date OR (created_at AT TIME ZONE 'America/Caracas')::date = %s::date)
+              AND UPPER(status) NOT IN ('CANCELADA', 'CANCELADO', 'ANULADA', 'ANULADO')
+            ORDER BY id ASC
+        """, (date_str, date_str, date_str))
+    else:
+        cursor.execute("""
+            SELECT * FROM orders
+            WHERE (date(created_at) = ? OR created_at LIKE ? || '%')
+              AND UPPER(status) NOT IN ('CANCELADA', 'CANCELADO', 'ANULADA', 'ANULADO')
+            ORDER BY id ASC
+        """, (date_str, date_str))
     orders_rows = [dict(r) for r in cursor.fetchall()]
 
     from app.bcv_service import bcv_service

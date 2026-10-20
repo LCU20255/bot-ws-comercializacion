@@ -26,7 +26,7 @@ from app.database import (
     create_product, update_product, delete_product,
     get_orders, get_order_by_id, get_order_by_ticket, update_order, update_order_status, delete_order,
     mark_reminder_sent, export_orders_df,
-    get_all_config, update_config, is_maintenance_active,
+    get_all_config, update_config, is_maintenance_active, is_bot_enabled, toggle_bot_enabled,
     get_inventory_movements, add_stock_batch, get_low_stock_products,
     get_available_catalog_products, get_financial_and_sales_metrics,
     get_waitlist, mark_waitlist_notified, update_waitlist_item,
@@ -211,6 +211,7 @@ class StockBatchSchema(BaseModel):
     created_by: Optional[str] = "TALLER_CONFECCION"
 
 class ConfigSchema(BaseModel):
+    bot_enabled: Optional[str] = None
     maintenance_mode: Optional[str] = None
     maintenance_message: Optional[str] = None
     business_hours_start: Optional[str] = None
@@ -707,6 +708,23 @@ def api_toggle_maintenance():
     status_str = "ACTIVADO" if new_val == "1" else "DESACTIVADO"
     return {"status": "ok", "maintenance_mode": new_val, "message": f"Modo Mantenimiento {status_str}"}
 
+# ----------------- REST API: CONTROL DE ACTIVACIÓN DEL BOT ("HABILITAR BOT / PLAY") -----------------
+@app.get("/api/bot/status")
+def api_get_bot_status():
+    global baileys_state
+    return {
+        "bot_enabled": is_bot_enabled(),
+        "baileys_status": baileys_state.get("status"),
+        "connected": baileys_state.get("status") == "CONNECTED",
+        "phone": baileys_state.get("phone")
+    }
+
+@app.post("/api/bot/toggle")
+def api_toggle_bot():
+    new_state = toggle_bot_enabled()
+    msg = "¡Bot HABILITADO! Ahora responderá automáticamente a los mensajes de WhatsApp." if new_state else "Bot PAUSADO. WhatsApp sigue conectado pero NO responderá automáticamente (atención 100% manual)."
+    return {"status": "ok", "bot_enabled": new_state, "message": msg}
+
 # ----------------- REST API: EXPORTACIÓN EXCEL / CSV -----------------
 @app.get("/api/export/excel")
 def api_export_excel():
@@ -748,121 +766,20 @@ def api_export_csv():
     headers = {'Content-Disposition': f'attachment; filename="{filename}"'}
     return StreamingResponse(io.BytesIO(output.getvalue().encode('utf-8-sig')), media_type='text/csv', headers=headers)
 
-# ----------------- REST API: REPORTE DIARIO DE VENTAS & DESGLOSE DE UNIFORMES -----------------
-@app.get("/api/reports/daily")
-def api_get_daily_report(date: Optional[str] = None):
-    return get_daily_sales_report(date)
-
-@app.get("/api/export/daily-report-excel")
-def api_export_daily_report_excel(date: Optional[str] = None):
-    report = get_daily_sales_report(date)
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        workbook = writer.book
-
-        title_fmt = workbook.add_format({
-            'bold': True, 'font_size': 13, 'font_color': '#0F172A', 'align': 'left'
-        })
-        subtitle_fmt = workbook.add_format({
-            'font_size': 9, 'font_color': '#475569', 'italic': True
-        })
-        header_fmt = workbook.add_format({
-            'bold': True, 'fg_color': '#166534', 'font_color': '#FFFFFF',
-            'border': 1, 'align': 'center', 'valign': 'vcenter'
-        })
-        curr_fmt = workbook.add_format({'num_format': '$#,##0.00', 'align': 'right'})
-        ves_fmt = workbook.add_format({'num_format': 'Bs. #,##0.00', 'align': 'right'})
-        center_fmt = workbook.add_format({'align': 'center'})
-
-        # 1. RESUMEN DE CIERRE
-        ws_resumen = workbook.add_worksheet('Cierre Diario')
-        ws_resumen.write('A1', 'COMPLEJO INDUSTRIAL TIUNA — SIS-COMER', title_fmt)
-        ws_resumen.write('A2', f"REPORTE OFICIAL DE CIERRE DIARIO DE VENTAS — {report['date_dmy']}", subtitle_fmt)
-        ws_resumen.write('A3', f"Tasa Oficial BCV Aplicada: Bs. {report['bcv_rate']:,.2f} / $", subtitle_fmt)
-
-        kpis = [
-            ("TOTAL PEDIDOS CONCRETADOS", report['total_orders']),
-            ("TOTAL UNIDADES DESPACHADAS", report['total_garments_sold']),
-            ("TOTAL FACTURADO EN DIVISAS ($)", f"${report['total_usd']:,.2f} REF"),
-            ("TOTAL FACTURADO EN BOLÍVARES (BS)", f"Bs. {report['total_ves']:,.2f}")
-        ]
-        ws_resumen.write('A5', 'CONCEPTO', header_fmt)
-        ws_resumen.write('B5', 'VALOR CONSOLIDADO', header_fmt)
-        for r_idx, (k, v) in enumerate(kpis, start=6):
-            ws_resumen.write(f'A{r_idx}', k)
-            ws_resumen.write(f'B{r_idx}', str(v), center_fmt)
-
-        ws_resumen.write('A11', 'MÉTODO DE PAGO', header_fmt)
-        ws_resumen.write('B11', 'TOTAL DIVISAS ($)', header_fmt)
-        r_start = 12
-        for pm, val in report['payment_methods_summary'].items():
-            ws_resumen.write(f'A{r_start}', pm)
-            ws_resumen.write(f'B{r_start}', val, curr_fmt)
-            r_start += 1
-
-        ws_resumen.set_column('A:A', 36)
-        ws_resumen.set_column('B:B', 24)
-
-        # 2. DESGLOSE DE UNIFORMES Y MODELOS
-        ws_uniforms = workbook.add_worksheet('Desglose Uniformes')
-        u_headers = ["ARTÍCULO / MODELO", "CATEGORÍA", "TALLAS VENDIDAS", "CANT. TOTAL", "TOTAL ($ REF)", "TOTAL (BS)"]
-        for c_idx, h in enumerate(u_headers):
-            ws_uniforms.write(0, c_idx, h, header_fmt)
-
-        for u_idx, u in enumerate(report['uniforms_summary'], start=1):
-            ws_uniforms.write(u_idx, 0, u['name'])
-            ws_uniforms.write(u_idx, 1, u['category'], center_fmt)
-            ws_uniforms.write(u_idx, 2, ", ".join(u['sizes_detail']))
-            ws_uniforms.write(u_idx, 3, u['total_qty'], center_fmt)
-            ws_uniforms.write(u_idx, 4, u['total_usd'], curr_fmt)
-            ws_uniforms.write(u_idx, 5, u['total_ves'], ves_fmt)
-
-        ws_uniforms.set_column('A:A', 32)
-        ws_uniforms.set_column('B:B', 16)
-        ws_uniforms.set_column('C:C', 35)
-        ws_uniforms.set_column('D:D', 14)
-        ws_uniforms.set_column('E:E', 18)
-        ws_uniforms.set_column('F:F', 22)
-
-        # 3. DETALLE ESPECÍFICO DE PEDIDOS
-        ws_orders = workbook.add_worksheet('Detalle de Pedidos')
-        o_headers = ["NRO. TICKET", "CLIENTE", "CÉDULA", "TELÉFONO", "HORA", "RESUMEN PRODUCTOS", "MÉTODO PAGO", "BANCO", "REFERENCIA", "TOTAL ($)", "TOTAL (BS)"]
-        for c_idx, h in enumerate(o_headers):
-            ws_orders.write(0, c_idx, h, header_fmt)
-
-        for row_idx, o in enumerate(report['detailed_orders'], start=1):
-            ws_orders.write(row_idx, 0, o['ticket_code'], center_fmt)
-            ws_orders.write(row_idx, 1, o['client_name'])
-            ws_orders.write(row_idx, 2, o['cedula'], center_fmt)
-            ws_orders.write(row_idx, 3, o['phone'])
-            ws_orders.write(row_idx, 4, o['created_time'], center_fmt)
-            ws_orders.write(row_idx, 5, o['items_summary'])
-            ws_orders.write(row_idx, 6, o['payment_method'])
-            ws_orders.write(row_idx, 7, o['receipt_bank'])
-            ws_orders.write(row_idx, 8, o['receipt_ref'], center_fmt)
-            ws_orders.write(row_idx, 9, o['amount_usd'], curr_fmt)
-            ws_orders.write(row_idx, 10, o['amount_ves'], ves_fmt)
-
-        ws_orders.set_column('A:A', 16)
-        ws_orders.set_column('B:B', 24)
-        ws_orders.set_column('C:C', 14)
-        ws_orders.set_column('D:D', 16)
-        ws_orders.set_column('E:E', 10)
-        ws_orders.set_column('F:F', 40)
-        ws_orders.set_column('G:G', 18)
-        ws_orders.set_column('H:H', 18)
-        ws_orders.set_column('I:I', 16)
-        ws_orders.set_column('J:J', 14)
-        ws_orders.set_column('K:K', 18)
-
-    output.seek(0)
-    filename = f"cierre_ventas_{report['date']}.xlsx"
-    headers = {'Content-Disposition': f'attachment; filename="{filename}"'}
-    return StreamingResponse(output, media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', headers=headers)
-
 # ----------------- REST API: SIMULADOR & OCR COMPROBANTES -----------------
 @app.post("/api/chat/simulate")
 def api_simulate_chat(body: SimulateChatSchema):
+    # Si el bot está pausado/deshabilitado, no generar respuesta automática
+    if not is_bot_enabled():
+        logger.info(f"Bot en pausa. Mensaje de {body.phone} ignorado para permitir atención manual.")
+        return {
+            "reply": "",
+            "messages": [],
+            "image_url": None,
+            "state": "BOT_DISABLED",
+            "bot_enabled": False
+        }
+
     # Si viene con imagen de comprobante adjunta
     if body.image_base64:
         img_bytes = base64.b64decode(body.image_base64)

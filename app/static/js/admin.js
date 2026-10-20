@@ -1384,6 +1384,9 @@ async function loadConfig() {
     const isMaint = cfg.maintenance_mode === "1";
     updateMaintUI(isMaint);
 
+    const isBotEnabled = cfg.bot_enabled !== "0";
+    updateBotStatusUI(isBotEnabled);
+
     if (cfg.maintenance_message && document.getElementById("cfg-maint-msg")) {
       document.getElementById("cfg-maint-msg").value = cfg.maintenance_message;
     }
@@ -1434,6 +1437,77 @@ async function toggleMaintenance() {
     notifySuccess(data.message);
   } catch (e) {
     notifyError("Error cambiando modo de mantenimiento");
+  }
+}
+
+function updateBotStatusUI(isBotEnabled) {
+  const topLabel = document.getElementById("bot-status-label");
+  const topBtn = document.getElementById("btn-toggle-bot");
+  const topIcon = document.getElementById("bot-toggle-icon");
+  const alertBar = document.getElementById("bot-disabled-alert-bar");
+  const tabStatusTag = document.getElementById("bot-status-tag");
+  const tabBtn = document.getElementById("btn-tab-toggle-bot");
+  const tabBtnLabel = document.getElementById("btn-tab-bot-label");
+  const tabBtnIcon = document.getElementById("btn-tab-bot-icon");
+  const connDesc = document.getElementById("conn-bot-status-desc");
+
+  if (isBotEnabled) {
+    if (topLabel) topLabel.innerText = "Bot: ACTIVO";
+    if (topBtn) {
+      topBtn.className = "btn btn-success";
+      topBtn.style.background = "#16a34a";
+      topBtn.style.borderColor = "#16a34a";
+    }
+    if (topIcon) topIcon.className = "bi bi-robot";
+    if (alertBar) alertBar.style.display = "none";
+    if (tabStatusTag) {
+      tabStatusTag.innerText = "HABILITADO";
+      tabStatusTag.className = "badge-status connected";
+    }
+    if (tabBtn) {
+      tabBtn.className = "btn btn-warning";
+      tabBtn.style.background = "#d97706";
+      tabBtn.style.borderColor = "#d97706";
+    }
+    if (tabBtnIcon) tabBtnIcon.className = "bi bi-pause-fill";
+    if (tabBtnLabel) tabBtnLabel.innerText = "Pausar Bot";
+    if (connDesc) {
+      connDesc.innerHTML = 'El bot de comercialización está <strong style="color: #16a34a;">HABILITADO</strong> y respondiendo en tiempo real en la línea:';
+    }
+  } else {
+    if (topLabel) topLabel.innerText = "Bot: PAUSADO";
+    if (topBtn) {
+      topBtn.className = "btn btn-warning";
+      topBtn.style.background = "#d97706";
+      topBtn.style.borderColor = "#d97706";
+    }
+    if (topIcon) topIcon.className = "bi bi-pause-circle-fill";
+    if (alertBar) alertBar.style.display = "flex";
+    if (tabStatusTag) {
+      tabStatusTag.innerText = "EN PAUSA";
+      tabStatusTag.className = "badge-status pending";
+    }
+    if (tabBtn) {
+      tabBtn.className = "btn btn-success";
+      tabBtn.style.background = "#16a34a";
+      tabBtn.style.borderColor = "#16a34a";
+    }
+    if (tabBtnIcon) tabBtnIcon.className = "bi bi-play-fill";
+    if (tabBtnLabel) tabBtnLabel.innerText = "Habilitar Bot (Dar Play)";
+    if (connDesc) {
+      connDesc.innerHTML = 'El bot está <strong style="color: #d97706;">EN PAUSA (DESHABILITADO)</strong>. La línea está vinculada pero el bot no responderá (atención 100% manual):';
+    }
+  }
+}
+
+async function toggleBotEnabled() {
+  try {
+    const res = await fetch("/api/bot/toggle", { method: "POST" });
+    const data = await res.json();
+    updateBotStatusUI(data.bot_enabled);
+    notifySuccess(data.message);
+  } catch (e) {
+    notifyError("Error al alternar estado del bot");
   }
 }
 

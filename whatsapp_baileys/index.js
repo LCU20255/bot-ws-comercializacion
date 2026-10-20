@@ -243,7 +243,15 @@ async function connectToWhatsApp() {
           image_base64: imageBase64
         });
 
+        if (response.data && response.data.bot_enabled === false) {
+          console.log(`⏸️ [Bot Pausado] Línea conectada pero bot deshabilitado. No se responde al cliente +${phone} para permitir atención humana manual.`);
+          continue;
+        }
+
         const { reply, image_url, messages } = response.data;
+        if (!reply && (!messages || messages.length === 0) && !image_url) {
+          continue;
+        }
         console.log(`🤖 [Bot Respuesta] Para: +${phone}`);
 
         // Enviar respuesta con o sin imagen
