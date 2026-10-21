@@ -1248,7 +1248,7 @@ def mark_reminder_sent(order_id: int):
 
 # ----------------- SYSTEM CONFIG -----------------
 DEFAULT_SYSTEM_CONFIG = {
-    "bot_name": "SIS-COMER - Equipo de Comercialización",
+    "bot_name": "SIS-COMER - Gerencia de Comercialización",
     "bot_enabled": "1",
     "maintenance_mode": "0",
     "maintenance_message": "¡Hola! En este momento nos encontramos en proceso de mantenimiento. Por favor comunícate con nosotros el día de mañana de 8:00 AM a 5:00 PM.",
@@ -1886,7 +1886,7 @@ def get_daily_sales_report(target_date: Optional[str] = None) -> Dict[str, Any]:
                 f"   📦 {o['items_summary']}"
             )
 
-    wa_lines.append("\n_Reporte generado automáticamente por SIS-COMER (Equipo de Comercialización)._")
+    wa_lines.append("\n_Reporte generado automáticamente por SIS-COMER (Gerencia de Comercialización)._")
 
     return {
         "date": date_str,

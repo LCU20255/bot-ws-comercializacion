@@ -648,7 +648,7 @@ def api_retake_order(order_id: int):
     
     message = (
         f"👋 *Saludos cordiales {client_name}:*\n\n"
-        "Le escribimos de *Complejo Industrial Tiuna — Equipo de Comercialización*. "
+        "Le escribimos de *Complejo Industrial Tiuna — Gerencia de Comercialización*. "
         "Nos comunicamos para retomar su consulta y atención tras haber finalizado nuestro periodo de mantenimiento.\n\n"
         "¿En qué artículos o confección podemos asistirle el día de hoy?\n\n"
         "Escriba *0* para ver la lista de productos disponibles para entrega inmediata."
@@ -673,7 +673,7 @@ async def api_send_reminder(order_id: int):
 
     message = (
         f"👋 *Estimado(a) {client_name}:*\n\n"
-        f"Le saludamos de *Complejo Industrial Tiuna — Equipo de Comercialización*. "
+        f"Le saludamos de *Complejo Industrial Tiuna — Gerencia de Comercialización*. "
         f"Nos comunicamos con respecto a su solicitud de *{items}* (Ticket: `{ticket}`).\n\n"
         f"Nos gustaría confirmar si aún se encuentra disponible para proceder con el retiro y despacho de su pedido en nuestra sede.\n\n"
         f"Quedamos atentos a su respuesta. ¡A su orden!"
@@ -959,7 +959,7 @@ def api_notify_single_waitlist(waitlist_id: int):
         greeting = "Buenas tardes" if 12 <= now_hour < 19 else ("Buenos días" if now_hour < 12 else "Buenas noches")
         msg = (
             f"👋 ¡Hola, {target.get('client_name') or 'Cliente'}! {greeting}.\n\n"
-            "Nos estamos comunicando de *Complejo Industrial Tiuna — Equipo de Comercialización*.\n\n"
+            "Nos estamos comunicando de *Complejo Industrial Tiuna — Gerencia de Comercialización*.\n\n"
             f"📦 Le informamos que el producto *{prod_name}* ya se encuentra *DISPONIBLE* en nuestro inventario.\n\n"
             "Puede responder a este mensaje para coordinar su solicitud. ¡Estamos a su entera orden!"
         )

@@ -1,12 +1,15 @@
 <!DOCTYPE html>
 <html lang="es">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Comprobante de Orden de Compra — Complejo Industrial Tiuna, C.A.</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap"
+        rel="stylesheet">
     <style>
         :root {
             --primary: #0f233a;
@@ -84,6 +87,7 @@
             background: #166534;
             color: #ffffff;
         }
+
         .btn-print:hover {
             background: #14532d;
         }
@@ -92,6 +96,7 @@
             background: #e2e8f0;
             color: #334155;
         }
+
         .btn-close:hover {
             background: #cbd5e1;
         }
@@ -175,11 +180,13 @@
             margin-top: 4px;
             text-transform: uppercase;
         }
+
         .status-confirmada {
             background: #dcfce7;
             color: #166534;
             border: 1px solid #86efac;
         }
+
         .status-pendiente {
             background: #fef9c3;
             color: #854d0e;
@@ -452,6 +459,7 @@
         }
     </style>
 </head>
+
 <body>
 
     <!-- Barra de Herramientas -->
@@ -477,10 +485,11 @@
         <header class="header">
             <div class="brand-block">
                 <h1>Complejo Industrial Tiuna, C.A.</h1>
-                <div class="subtitle">Equipo de Comercialización Textil</div>
+                <div class="subtitle">Gerencia de Comercialización Textil</div>
                 <div class="meta-info">
                     <strong>RIF:</strong> {{ order.company_rif or 'G-20011500-2' }}<br>
-                    <strong>Sede de Despacho:</strong> {{ order.company_address or 'Fuerte Tiuna, El Valle, Caracas, D.C.' }}<br>
+                    <strong>Sede de Despacho:</strong> {{ order.company_address or 'Fuerte Tiuna, El Valle, Caracas,
+                    D.C.' }}<br>
                     <strong>Contacto:</strong> {{ order.company_phone or '0412-1234567' }}
                 </div>
             </div>
@@ -490,9 +499,9 @@
                 <div class="ticket-number">{{ order.ticket_code or 'CIT-ORDEN' }}</div>
                 {% set st = (order.status or 'PENDIENTE') | upper %}
                 {% if 'CONFIRMADA' in st %}
-                    <span class="status-badge status-confirmada">● PAGO CONFIRMADO</span>
+                <span class="status-badge status-confirmada">● PAGO CONFIRMADO</span>
                 {% else %}
-                    <span class="status-badge status-pendiente">● {{ order.status or 'PENDIENTE POR CONFIRMAR' }}</span>
+                <span class="status-badge status-pendiente">● {{ order.status or 'PENDIENTE POR CONFIRMAR' }}</span>
                 {% endif %}
             </div>
         </header>
@@ -524,7 +533,8 @@
                 <table class="info-table">
                     <tr>
                         <td>Fecha Retiro:</td>
-                        <td><strong>{{ order.pickup_date or 'POR ASIGNAR' }}</strong> a las <strong>{{ order.pickup_time or '09:00 AM' }}</strong></td>
+                        <td><strong>{{ order.pickup_date or 'POR ASIGNAR' }}</strong> a las <strong>{{ order.pickup_time
+                                or '09:00 AM' }}</strong></td>
                     </tr>
                     <tr>
                         <td>Banco Emisor:</td>
@@ -552,28 +562,28 @@
                 </thead>
                 <tbody>
                     {% if order.items_list and order.items_list | length > 0 %}
-                        {% for it in order.items_list %}
-                        <tr>
-                            <td class="col-center">{{ loop.index }}</td>
-                            <td class="col-center"><strong>{{ it.qty or 1 }}</strong></td>
-                            <td>
-                                {{ it.name }}
-                                {% if it.size %}
-                                    <span class="item-size-badge">TALLA: {{ it.size }}</span>
-                                {% endif %}
-                            </td>
-                            <td class="col-right">${{ "%.2f" | format(it.unit_price or it.subtotal or 0.0) }}</td>
-                            <td class="col-right">${{ "%.2f" | format(it.subtotal or 0.0) }}</td>
-                        </tr>
-                        {% endfor %}
+                    {% for it in order.items_list %}
+                    <tr>
+                        <td class="col-center">{{ loop.index }}</td>
+                        <td class="col-center"><strong>{{ it.qty or 1 }}</strong></td>
+                        <td>
+                            {{ it.name }}
+                            {% if it.size %}
+                            <span class="item-size-badge">TALLA: {{ it.size }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="col-right">${{ "%.2f" | format(it.unit_price or it.subtotal or 0.0) }}</td>
+                        <td class="col-right">${{ "%.2f" | format(it.subtotal or 0.0) }}</td>
+                    </tr>
+                    {% endfor %}
                     {% else %}
-                        <tr>
-                            <td class="col-center">1</td>
-                            <td class="col-center"><strong>{{ order.total_items or 1 }}</strong></td>
-                            <td>{{ order.items_summary or 'ARTÍCULOS CONFECCIONADOS' }}</td>
-                            <td class="col-right">${{ "%.2f" | format(order.amount_usd or order.total_amount or 0.0) }}</td>
-                            <td class="col-right">${{ "%.2f" | format(order.amount_usd or order.total_amount or 0.0) }}</td>
-                        </tr>
+                    <tr>
+                        <td class="col-center">1</td>
+                        <td class="col-center"><strong>{{ order.total_items or 1 }}</strong></td>
+                        <td>{{ order.items_summary or 'ARTÍCULOS CONFECCIONADOS' }}</td>
+                        <td class="col-right">${{ "%.2f" | format(order.amount_usd or order.total_amount or 0.0) }}</td>
+                        <td class="col-right">${{ "%.2f" | format(order.amount_usd or order.total_amount or 0.0) }}</td>
+                    </tr>
                     {% endif %}
                 </tbody>
             </table>
@@ -585,14 +595,16 @@
             <div class="validation-card">
                 <div class="qr-wrapper">
                     {% if order.qr_code_base64 %}
-                        <img src="{{ order.qr_code_base64 }}" alt="QR Validación">
+                    <img src="{{ order.qr_code_base64 }}" alt="QR Validación">
                     {% else %}
-                        <img src="https://api.qrserver.com/v1/create-qr-code/?size=100x100&data={{ order.ticket_code or 'CIT-VALID' }}" alt="QR Validación">
+                    <img src="https://api.qrserver.com/v1/create-qr-code/?size=100x100&data={{ order.ticket_code or 'CIT-VALID' }}"
+                        alt="QR Validación">
                     {% endif %}
                 </div>
                 <div class="validation-text">
                     <h5>Validación Digital Escaneable</h5>
-                    <p>Documento oficial emitido para control de almacén, intendencia y entrega de material conforme.</p>
+                    <p>Documento oficial emitido para control de almacén, intendencia y entrega de material conforme.
+                    </p>
                     <span class="audit-code">Código de Control: {{ order.ticket_code or 'CIT-VALID' }}</span>
                 </div>
             </div>
@@ -602,7 +614,8 @@
                 <table class="totals-table">
                     <tr>
                         <td>Subtotal Neto:</td>
-                        <td>${{ "%.2f" | format(order.subtotal_usd or order.amount_usd or order.total_amount or 0.0) }} Ref</td>
+                        <td>${{ "%.2f" | format(order.subtotal_usd or order.amount_usd or order.total_amount or 0.0) }}
+                            Ref</td>
                     </tr>
                     {% if order.iva_amount and order.iva_amount > 0 %}
                     <tr>
@@ -619,8 +632,10 @@
                         <td>Bs. {{ "{:,.2f}".format(order.amount_ves or 0.0) }}</td>
                     </tr>
                     <tr>
-                        <td colspan="2" style="font-size: 0.68rem; color: #64748b; text-align: right; background: #fff;">
-                            Tasa Oficial BCV Aplicada: <strong>Bs. {{ "%.4f" | format(order.bcv_rate_applied or 0.0) }} / $</strong>
+                        <td colspan="2"
+                            style="font-size: 0.68rem; color: #64748b; text-align: right; background: #fff;">
+                            Tasa Oficial BCV Aplicada: <strong>Bs. {{ "%.4f" | format(order.bcv_rate_applied or 0.0) }}
+                                / $</strong>
                         </td>
                     </tr>
                 </table>
@@ -641,11 +656,13 @@
 
         <!-- Pie Legal -->
         <footer class="legal-footer">
-            Este comprobante de orden de compra es un documento de control operativo para el retiro de mercancía en la sede del Complejo Industrial Tiuna, C.A.<br>
+            Este comprobante de orden de compra es un documento de control operativo para el retiro de mercancía en la
+            sede del Complejo Industrial Tiuna, C.A.<br>
             Conservar este comprobante digital o impreso para la recepción del pedido en intendencia.
         </footer>
 
     </div>
 
 </body>
+
 </html>

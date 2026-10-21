@@ -221,7 +221,7 @@ def notify_waitlist_stock_available(product_id: int, product_name: str) -> int:
         phone = item["phone"]
         msg = (
             f"👋 ¡Hola, {client_name}! {greeting}.\n\n"
-            "Nos estamos comunicando de *Complejo Industrial Tiuna — Equipo de Comercialización*.\n\n"
+            "Nos estamos comunicando de *Complejo Industrial Tiuna — Gerencia de Comercialización*.\n\n"
             f"📦 Le informamos que el producto *{product_name}* que estaba esperando ya se encuentra *DISPONIBLE* en nuestro inventario.\n\n"
             "Puede responder a este mensaje en cualquier momento para coordinar y procesar su solicitud. ¡Estamos a su entera orden!"
         )

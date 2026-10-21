@@ -229,7 +229,7 @@ assert r_final["state"] == "COMPLETED", "Fallo: La orden no finalizó en COMPLET
 ticket = r_final["ticket_code"]
 assert ticket.startswith("CIT-"), f"Fallo: Formato de ticket inválido {ticket}"
 assert "TICKET OFICIAL SIS-COMER" in r_final["reply"], "Fallo: No contiene ticket oficial en respuesta"
-assert "Equipo de Comercialización (Piso 1)" in r_final["reply"], "Fallo: No contiene instrucción de dirigirse a Piso 1"
+assert "Gerencia de Comercialización (Piso 1)" in r_final["reply"], "Fallo: No contiene instrucción de dirigirse a Piso 1"
 assert "Recepción" in r_final["reply"], "Fallo: No menciona área de Recepción"
 print(f"  ✓ Paso 6.3: Solicitud completada exitosamente -> Ticket emitido: {ticket} con instrucciones de Piso 1 y Recepción")
 passed_tests += 1

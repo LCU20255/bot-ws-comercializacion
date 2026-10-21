@@ -1,5 +1,5 @@
 -- ==============================================================================
--- SISTEMA SIS-COMER (COMPLEJO INDUSTRIAL TIUNA - EQUIPO DE COMERCIALIZACIÓN)
+-- SISTEMA SIS-COMER (COMPLEJO INDUSTRIAL TIUNA - Gerencia de Comercialización)
 -- ESTRUCTURA COMPLETA DE BASE DE DATOS PARA SUPABASE (POSTGRESQL)
 -- ==============================================================================
 -- Instrucciones de uso en Supabase:

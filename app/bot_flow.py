@@ -800,7 +800,7 @@ class BotFlowManager:
                     return {
                         "reply": (
                             "📋 *SOLICITUD ESPECIAL Y LISTA DE ESPERA*\n"
-                            "🏭 *Complejo Industrial Tiuna — Equipo de Comercialización*\n\n"
+                            "🏭 *Complejo Industrial Tiuna — Gerencia de Comercialización*\n\n"
                             "Indíquenos: *¿Cuál es el modelo o producto especial que está buscando?*\n"
                             "*(Ejemplo: Chaleco táctico, Chaqueta de gala, Botas de campaña, Condecoraciones, etc.)*"
                         ),
@@ -865,7 +865,7 @@ class BotFlowManager:
                 return {
                     "reply": (
                         "📝 *LISTA DE ESPERA Y DISPONIBILIDAD*\n"
-                        "*Complejo Industrial Tiuna — Equipo de Comercialización*\n\n"
+                        "*Complejo Industrial Tiuna — Gerencia de Comercialización*\n\n"
                         "Indíquenos: *¿Cuál es el producto que está buscando o requiere?*\n"
                         "*(Ejemplo: Chaleco táctico, Chaqueta patriota, Botas, Condecoraciones, etc.)*"
                     ),
@@ -898,7 +898,7 @@ class BotFlowManager:
                     return {
                         "reply": (
                             f"✅ *¡Perfecto! Nos estaremos comunicando con usted cuando el producto que requiera esté disponible.*\n\n"
-                            f"Hemos registrado su solicitud para *{prod_name}* en el sistema de *Complejo Industrial Tiuna — Equipo de Comercialización*.\n\n"
+                            f"Hemos registrado su solicitud para *{prod_name}* en el sistema de *Complejo Industrial Tiuna — Gerencia de Comercialización*.\n\n"
                             "En cuanto ingrese stock o sea incorporado al inventario, el sistema le enviará un mensaje automático a este número de WhatsApp.\n\n"
                             "¡Gracias por contactarnos! (Escriba *0* si desea volver al catálogo)."
                         ),
@@ -948,7 +948,7 @@ class BotFlowManager:
                 return {
                     "reply": (
                         f"✅ *¡Perfecto! Nos estaremos comunicando con usted cuando el producto que requiera esté disponible.*\n\n"
-                        f"Hemos registrado su solicitud para *{session['waitlist_product_name']}* en el sistema de *Complejo Industrial Tiuna — Equipo de Comercialización*.\n\n"
+                        f"Hemos registrado su solicitud para *{session['waitlist_product_name']}* en el sistema de *Complejo Industrial Tiuna — Gerencia de Comercialización*.\n\n"
                         "En cuanto se reponga el stock o sea incorporado al inventario, recibirá un aviso automático a este WhatsApp.\n\n"
                         "¡Gracias por contactarnos! (Escriba *0* si desea volver al catálogo)."
                     ),
@@ -1001,7 +1001,7 @@ class BotFlowManager:
             return {
                 "reply": (
                     f"✅ *¡Perfecto, {session['client_name']}! Nos estaremos comunicando con usted cuando el producto que requiera esté disponible.*\n\n"
-                    f"Hemos registrado su solicitud para *{prod_name}* en el sistema de *Complejo Industrial Tiuna — Equipo de Comercialización*.\n\n"
+                    f"Hemos registrado su solicitud para *{prod_name}* en el sistema de *Complejo Industrial Tiuna — Gerencia de Comercialización*.\n\n"
                     "En cuanto ingrese stock o sea incorporado al inventario, el sistema le enviará un mensaje automático a este número de WhatsApp.\n\n"
                     "¡Gracias por contactarnos! (Escriba *0* si desea volver al catálogo)."
                 ),
@@ -1034,7 +1034,7 @@ class BotFlowManager:
                 return {
                     "reply": (
                         f"✅ *¡Perfecto, {c_name}! Nos estaremos comunicando con usted cuando el producto que requiera esté disponible.*\n\n"
-                        f"Hemos registrado su solicitud para *{prod_name}* en el sistema de *Complejo Industrial Tiuna — Equipo de Comercialización*.\n\n"
+                        f"Hemos registrado su solicitud para *{prod_name}* en el sistema de *Complejo Industrial Tiuna — Gerencia de Comercialización*.\n\n"
                         "En cuanto ingrese stock o sea incorporado al inventario, el sistema le enviará un mensaje automático a su número de WhatsApp.\n\n"
                         "¡Gracias por contactarnos! (Escriba *0* si desea volver al catálogo)."
                     ),
@@ -1775,7 +1775,7 @@ class BotFlowManager:
                 "No se preocupe: su requerimiento está asegurado y en cuanto el personal valide los fondos, "
                 "recibirá automáticamente por este mismo chat su notificación de *PAGO CONFIRMADO*.\n\n"
                 "📌 *INSTRUCCIONES PARA EL RETIRO:*\n"
-                "1. Al llegar a nuestra sede, diríjase al área de *Recepción* e indique que se dirige con el *Equipo de Comercialización (Piso 1)*.\n"
+                "1. Al llegar a nuestra sede, diríjase al área de *Recepción* e indique que se dirige con el *Gerencia de Comercialización (Piso 1)*.\n"
                 f"2. En recepción notifique que viene a retirar su orden de: *{saved['items_summary']}*.\n"
                 f"3. En el Piso 1 presente su Cédula de Identidad (*{saved['cedula']}*) y muestre este ticket oficial: *{ticket_code}* para validar su atención y hacerle entrega inmediata de su producto.\n\n"
                 "¡Gracias por su compra en SIS-COMER! Escriba *Menú* para realizar una nueva solicitud."
@@ -1793,7 +1793,7 @@ class BotFlowManager:
             "reply": (
                 "👋 *¡Hola! ¿Cómo estás? Bienvenido a SIS-COMER.*\n"
                 "Soy *SIS-COMER*, tu asistente virtual.\n"
-                "🏭 *Complejo Industrial Tiuna — Equipo de Comercialización*\n\n"
+                "🏭 *Complejo Industrial Tiuna — Gerencia de Comercialización*\n\n"
                 "Para poder atenderle y registrar su solicitud de compra, por favor indíquenos:\n\n"
                 "✍️ *¿Me puedes indicar tu Nombre y Apellido completo?*"
             ),
@@ -1883,7 +1883,7 @@ class BotFlowManager:
                 lines.append(f"👋 ¡Hola, *{client_name}*! Bienvenido(a) a *SIS-COMER*.")
             else:
                 lines.append("👋 ¡Bienvenido! Soy *SIS-COMER*, tu asistente virtual.")
-            lines.append("🏭 *Complejo Industrial Tiuna — Equipo de Comercialización*")
+            lines.append("🏭 *Complejo Industrial Tiuna — Gerencia de Comercialización*")
             lines.append(f"📊 *Tasa Oficial BCV:* Bs. {bcv_rate:,.2f} / $\n")
 
         if not products:
