@@ -1071,6 +1071,34 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-  <script src="/static/js/admin.js?v=3"></script>
+  <script>
+    // Fallback global handler para garantizar ejecución inmediata independientemente de la caché del navegador
+    window.toggleBotEnabled = async function() {
+      try {
+        const res = await fetch("/api/bot/toggle", { method: "POST" });
+        const data = await res.json();
+        if (typeof updateBotStatusUI === "function") {
+          updateBotStatusUI(data.bot_enabled);
+        } else {
+          location.reload();
+        }
+        if (typeof notifySuccess === "function") {
+          notifySuccess(data.message);
+        } else if (typeof Swal !== "undefined") {
+          Swal.fire({ icon: 'success', title: 'SIS-COMER', text: data.message, timer: 2000, showConfirmButton: false });
+        } else {
+          alert(data.message);
+        }
+      } catch (e) {
+        console.error(e);
+        if (typeof notifyError === "function") {
+          notifyError("Error al alternar estado del bot");
+        } else {
+          alert("Error al alternar estado del bot");
+        }
+      }
+    };
+  </script>
+  <script src="/static/js/admin.js?v=4.1"></script>
 </body>
 </html>

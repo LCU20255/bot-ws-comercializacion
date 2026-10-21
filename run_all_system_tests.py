@@ -62,6 +62,9 @@ if len(existing_p) == 0:
         "active": 1
     })
 
+# Asegurar condiciones estándar para la batería de pruebas
+update_config({"maintenance_mode": "0", "bot_enabled": "1"})
+
 passed_tests = 0
 total_tests = 15
 

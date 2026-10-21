@@ -166,16 +166,20 @@ class PgConnectionWrapper:
             self.commit()
         self.close()
 
+_initializing_db = False
+_pg_initialized = False
+
 def get_connection():
-    global _initializing_db
+    global _initializing_db, _pg_initialized
     if is_postgres():
         import psycopg2
         raw_conn = psycopg2.connect(get_normalized_db_url())
         conn = PgConnectionWrapper(raw_conn)
-        if not _initializing_db:
+        if not _pg_initialized and not _initializing_db:
             _initializing_db = True
             try:
                 init_db(conn=conn)
+                _pg_initialized = True
             finally:
                 _initializing_db = False
         return conn

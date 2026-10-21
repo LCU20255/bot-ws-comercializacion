@@ -1510,6 +1510,8 @@ async function toggleBotEnabled() {
     notifyError("Error al alternar estado del bot");
   }
 }
+window.toggleBotEnabled = toggleBotEnabled;
+window.updateBotStatusUI = updateBotStatusUI;
 
 async function saveConfig(e) {
   e.preventDefault();
